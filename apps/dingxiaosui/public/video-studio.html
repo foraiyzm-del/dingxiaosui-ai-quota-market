@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><link rel="stylesheet" href="/event-access.css?v=direct-1"><script src="/event-access.js?v=direct-1" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf8fc">
+  <title>30 秒短片 · 紫丁香计划</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/video-studio.css">
+  <script src="/video-studio.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#film-title">跳到创作内容</a>
+  <div class="page-shell">
+    <header class="site-nav">
+      <a class="brand" href="/workbench.html"><img src="/favicon.svg" alt=""><span>紫丁香计划<small>农品影像创作</small></span></a>
+      <nav aria-label="页面导航"><a href="/workbench.html">返回工作台 <span aria-hidden="true">↗</span></a><button id="open-settings" class="text-button" type="button" hidden>接口配置</button></nav>
+    </header>
+    <main>
+      <header class="page-heading">
+        <div><p class="eyebrow">一桌风味，一门手艺</p><h1>把农品故事，做成短片。</h1><p class="intro">从三个镜头开始，让画面、讲述和字幕一起呈现。</p></div>
+        <div class="film-spec" aria-label="成片规格"><strong>30<span>秒</span></strong><div><span>9:16 竖屏</span><span>知性女声 · 中文字幕</span></div></div>
+      </header>
+      <section id="capability-banner" class="capability-banner" aria-labelledby="capability-title">
+        <span class="status-dot" aria-hidden="true"></span>
+        <div><h2 id="capability-title">正在检查创作服务</h2><p id="capability-summary">读取视频、配音与合成状态…</p><ul id="missing-list" hidden></ul></div>
+        <button id="banner-settings" type="button" class="small-button" hidden>配置接口 <span aria-hidden="true">↗</span></button>
+      </section>
+      <p id="notice" class="notice" role="alert" hidden></p>
+      <section id="auth-notice" class="auth-notice" hidden><h2>先进入自己的创作账号</h2><p>登录后，即可查看当前账号的作品和创作服务。</p><a href="/login?return_to=%2Fvideo-studio.html" class="small-button">登录网站</a><a href="/workbench.html" class="text-button">返回工作台</a></section>
+      <div class="workspace" id="workspace">
+        <section class="editor" aria-labelledby="script-heading">
+          <div class="section-heading"><div><span class="eyebrow">01 · 创作内容</span><h2 id="script-heading">先把想讲的故事说清楚</h2></div><span class="quiet-tag">三段镜头 · 每段 10 秒</span></div>
+          <form id="film-form">
+            <fieldset id="creative-fields">
+              <label class="title-label" for="film-title">短片标题</label>
+              <input id="film-title" name="title" required maxlength="60" value="岚县，一桌宴与一双手" autocomplete="off">
+              <p class="editing-note">可以直接使用这份岚县草稿，也可以展开镜头调整画面与讲述。</p>
+              <div id="segments" class="segments"></div>
+            </fieldset>
+            <div class="production-note"><span aria-hidden="true">◎</span><p>全片标注「AI 生成 · 非实拍」。食物造型与场景为创意示意，发布前请核对当地实物与工艺。</p></div>
+            <label class="consent"><input type="checkbox" id="generation-consent"><span>我已核对内容，同意生成 <strong>3 段 10 秒视频和 3 段配音</strong>，会使用已配置服务的额度。</span></label>
+            <button id="generate" type="submit" class="primary-button" disabled><span aria-hidden="true">✦</span><span id="generate-label">生成 30 秒短片</span><span aria-hidden="true">↗</span></button>
+            <p class="button-help" id="generation-help">接口就绪后，可以在这里开始生成。</p>
+          </form>
+        </section>
+        <aside class="preview-column" aria-label="短片预览与任务进度">
+          <section class="preview-card" aria-labelledby="preview-heading">
+            <div class="section-heading"><div><span class="eyebrow">02 · 成片预览</span><h2 id="preview-heading">在这里，看见结果</h2></div><span class="quiet-tag" id="job-badge">尚未生成</span></div>
+            <div class="video-frame">
+              <div id="preview-placeholder" class="preview-placeholder"><div class="frame-mark" aria-hidden="true">▷</div><p id="placeholder-title">成片将在这里显示</p><span id="placeholder-description">真实生成完成后，可直接播放和下载</span><small>9:16 · 30 秒</small></div>
+              <video id="film-player" controls playsinline preload="metadata" hidden aria-label="生成的30秒竖屏短片"></video>
+              <span class="frame-label">AI 生成 · 非实拍</span>
+            </div>
+            <div id="output-actions" class="output-actions" hidden><a id="download-video" class="download-primary" download>下载 MP4 <span aria-hidden="true">↓</span></a><a id="download-subtitles" download>下载字幕 SRT <span aria-hidden="true">↓</span></a></div>
+            <p id="output-details" class="output-details" hidden></p>
+            <div class="job-heading"><span id="selected-job-title">生成进度</span><button id="refresh" type="button" class="text-button">刷新状态</button></div>
+            <p id="current-stage" class="current-stage" aria-live="polite">还没有提交生成任务。</p>
+            <ol id="job-segments" class="job-segments"><li><span>01</span><div><strong>土豆宴</strong><small>等待提交</small></div><i aria-hidden="true">—</i></li><li><span>02</span><div><strong>面塑手作</strong><small>等待提交</small></div><i aria-hidden="true">—</i></li><li><span>03</span><div><strong>一桌宴与一双手</strong><small>等待提交</small></div><i aria-hidden="true">—</i></li></ol>
+            <p id="job-error" class="job-error" hidden></p>
+            <button id="resume" type="button" class="small-button resume-button" hidden>继续这项任务</button>
+          </section>
+          <section class="history-card" aria-labelledby="history-heading"><div class="section-heading"><h2 id="history-heading">我的短片</h2><span id="history-count" class="quiet-tag">0 条</span></div><div id="history"><p class="empty-history">完成的短片和处理中任务会保存在这里。</p></div></section>
+        </aside>
+      </div>
+    </main>
+    <footer><span>紫丁香计划 · 更懂山西农产品</span><span>创作、播放与下载，都在本站完成</span></footer>
+  </div>
+  <dialog id="resume-dialog" class="resume-dialog" aria-labelledby="resume-heading" aria-describedby="resume-description">
+    <div class="dialog-heading"><div><p class="eyebrow">继续当前制作</p><h2 id="resume-heading">恢复这项短片任务</h2></div><button id="close-resume" type="button" class="close-button" aria-label="取消恢复任务">×</button></div>
+    <p id="resume-job-title" class="resume-job-title"></p>
+    <p id="resume-description" class="dialog-intro">将按本站保存的进度继续。保留已完成镜头，未完成步骤可能使用额度。</p>
+    <div class="resume-actions"><button id="cancel-resume" type="button" class="small-button" autofocus>取消</button><button id="confirm-resume" type="button" class="primary-button">继续恢复</button></div>
+  </dialog>
+  <dialog id="settings-dialog" aria-labelledby="settings-heading">
+    <div class="dialog-heading"><div><p class="eyebrow">仅配置人员可见</p><h2 id="settings-heading">视频与配音接口</h2></div><button id="close-settings" type="button" class="close-button" aria-label="关闭接口配置">×</button></div>
+    <p class="dialog-intro">为本站配置生成服务。保存只检查配置是否完整，实际生成会使用相应账户额度。</p>
+    <form id="settings-form" autocomplete="off">
+      <fieldset id="settings-fields">
+        <section class="settings-section"><div class="settings-section-heading"><span>01</span><div><h3>火山方舟 · 视频生成</h3><p>需要已开通 Seedance 2.x 的 API Key 和模型 / ep 接入点 ID，请填写控制台的真实配置。</p></div></div>
+          <label for="video-model">视频模型 / 接入点 ID<input id="video-model" required maxlength="120" placeholder="填写已开通的 Seedance 2.x 模型或 ep 接入点 ID" autocomplete="off"></label>
+          <label for="video-api-key">视频 API Key<input id="video-api-key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" placeholder="填写火山方舟 API Key"></label><small id="video-key-status" class="key-status"></small>
+        </section>
+        <section class="settings-section"><div class="settings-section-heading"><span>02</span><div><h3>豆包语音 · 知性女声</h3><p>需要独立开通语音合成服务。视频 API Key 不会自动获得语音权限。</p></div></div>
+          <label for="speech-auth-mode">语音认证方式<select id="speech-auth-mode"><option value="apiKey">新版语音 API Key</option><option value="legacy">已有语音应用 · App ID 与 Access Token</option></select></label>
+          <p id="speech-auth-help" class="auth-mode-help">使用新版语音控制台生成的 API Key。</p>
+          <div id="speech-api-fields"><label for="speech-api-key">语音 API Key<input id="speech-api-key" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" placeholder="填写豆包语音 API Key"></label><small id="speech-key-status" class="key-status"></small></div>
+          <div id="speech-legacy-fields" hidden><label for="speech-app-id">语音应用 App ID<input id="speech-app-id" maxlength="120" autocomplete="off" spellcheck="false" placeholder="填写已有语音应用的 App ID" disabled></label><label for="speech-access-token">语音 Access Token<input id="speech-access-token" type="password" maxlength="4096" autocomplete="new-password" spellcheck="false" placeholder="填写该语音应用的 Access Token" disabled></label><small id="speech-token-status" class="key-status"></small></div>
+          <div class="voice-summary"><span aria-hidden="true">◖</span><div><strong>知性女声 2.0</strong><span>普通话 · 温和、清楚的文化讲述</span></div></div>
+          <details class="technical-settings"><summary>查看语音服务参数</summary><p>资源标识：<code>seed-tts-2.0</code></p><p>音色标识：<code>zh_female_zhixingnv_uranus_bigtts</code></p></details>
+        </section>
+      </fieldset>
+      <p class="secret-note">密钥仅提交到本站服务端保存，不会写入浏览器存储，也不会在页面回显。留空会保留已有密钥。</p>
+      <p id="settings-notice" class="notice" role="status" hidden></p>
+      <button id="save-settings" type="submit" class="primary-button">保存接口配置 <span aria-hidden="true">↗</span></button>
+    </form>
+  </dialog>
+</body>
+</html>

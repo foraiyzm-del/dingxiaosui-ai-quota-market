@@ -1,0 +1,53 @@
+'use client';
+import {useEffect,useState} from 'react';
+import {MessageSquare,Image as ImageIcon,Film,CheckCircle2,ArrowUpRight} from 'lucide-react';
+
+type Capability='text'|'image'|'video';
+type Preset='apimart'|'ark';
+type Config={kind:string;endpoint:string;model:string;enabled:boolean;hasKey:boolean;revision:number;encryptionReady:boolean;jsonMode?:boolean};
+type Configs=Record<Capability,Config>;
+type Progress={state:'saving'|'saved'|'failed'|'unknown';message:string};
+const capabilities:Capability[]=['text','image','video'];
+const labels={text:'文字',image:'图片',video:'视频'};
+const icons={text:MessageSquare,image:ImageIcon,video:Film};
+const presets={
+ apimart:{name:'APIMart',text:{kind:'openai-compatible',endpoint:'https://api.apimart.ai/v1/chat/completions',model:'deepseek-v4.1-flash'},image:{kind:'apimart',endpoint:'https://api.apimart.ai/v1/images/generations',model:'gpt-image-2.5-flare'},video:{kind:'apimart',endpoint:'https://api.apimart.ai/v1/videos/generations',model:'seedance-2.0-mini'}},
+ ark:{name:'火山方舟',text:{kind:'ark',endpoint:'https://ark.cn-beijing.volces.com/api/v3/chat/completions',model:''},image:{kind:'ark',endpoint:'https://ark.cn-beijing.volces.com/api/v3/images/generations',model:''},video:{kind:'ark',endpoint:'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks',model:''}},
+};
+class SettingsError extends Error{constructor(message:string,readonly status:number){super(message)}}
+async function call<T>(url:string,method='GET',body?:unknown,timeoutMs=15000):Promise<T>{const response=await fetch(url,{method,cache:'no-store',headers:{'content-type':'application/json'},signal:AbortSignal.timeout(timeoutMs),...(body?{body:JSON.stringify(body)}:{})});const data=await response.json() as {error?:string};if(!response.ok)throw new SettingsError(data.error||'操作未完成',response.status);return data as T;}
+
+export default function ServiceSettings(){
+ const [configs,setConfigs]=useState<Configs|null>(null),[preset,setPreset]=useState<Preset|null>(null),[busy,setBusy]=useState(false),[key,setKey]=useState(''),[notice,setNotice]=useState(''),[checked,setChecked]=useState<Record<Capability,boolean>>({text:true,image:true,video:false}),[models,setModels]=useState<Record<Capability,string>>({text:'',image:'',video:''}),[progress,setProgress]=useState<Partial<Record<Capability,Progress>>>({}),[textTest,setTextTest]=useState(''),[testConsent,setTestConsent]=useState(false);
+ async function read(){const [text,media]=await Promise.all([call<{config:Config}>('/api/platform/ai-settings'),call<{configs:Pick<Configs,'image'|'video'>}>('/api/platform/media-settings')]);const next={text:text.config,...media.configs};setConfigs(next);return next;}
+ async function load(){setBusy(true);setNotice('');setKey('');setPreset(null);setProgress({});setTextTest('');setTestConsent(false);try{const next=await read();setModels(Object.fromEntries(capabilities.map(c=>[c,next[c].model])) as Record<Capability,string>)}catch(e){setConfigs(null);setNotice((e as Error).message)}finally{setBusy(false)}}
+ useEffect(()=>{void load();const changed=(event:StorageEvent)=>{if(event.key==='zdx-auth-change-v1')window.location.reload()};window.addEventListener('storage',changed);return()=>window.removeEventListener('storage',changed)},[]);
+ function choosePreset(value:Preset){if(!configs||busy)return;setPreset(value);setKey('');setNotice('');setProgress({});setTestConsent(false);setChecked({text:true,image:true,video:false});setModels(Object.fromEntries(capabilities.map(c=>{const service=presets[value][c];return [c,service?(configs[c].kind===service.kind&&configs[c].endpoint===service.endpoint?configs[c].model:service.model):configs[c].model]})) as Record<Capability,string>)}
+ async function save(event:React.FormEvent){
+  event.preventDefault();if(!configs||!preset||busy)return;const chosen=capabilities.filter(c=>checked[c]&&presets[preset][c]);if(!chosen.length){setNotice('请至少选择一种要保存的创作能力。');return;}
+  for(const c of chosen){const service=presets[preset][c]!;if(!models[c].trim()){setNotice('请填写'+labels[c]+'模型 ID。');return;}if(!key.trim()&&(!configs[c].hasKey||configs[c].kind!==service.kind||configs[c].endpoint!==service.endpoint)){setNotice('首次接入或切换'+labels[c]+'服务时，请填写 '+presets[preset].name+' API Key。');return;}}
+  setBusy(true);setNotice('');setProgress({});setTestConsent(false);if(chosen.includes('text'))setTextTest('');const done:Capability[]=[],failed:Capability[]=[],uncertain:Capability[]=[];
+  for(const c of chosen){
+   const service=presets[preset][c]!;setProgress(old=>({...old,[c]:{state:'saving',message:'正在保存…'}}));
+   try{const result=await call<{config:Config}>(c==='text'?'/api/platform/ai-settings':'/api/platform/media-settings','PUT',{...(c==='text'?{jsonMode:true}:{capability:c}),kind:service.kind,endpoint:service.endpoint,model:models[c].trim(),enabled:true,apiKey:key.trim(),clearKey:false,revision:configs[c].revision});setConfigs(old=>old?{...old,[c]:result.config}:old);done.push(c);setProgress(old=>({...old,[c]:{state:'saved',message:'已保存并启用 · 尚未生成验收'}}));}
+   catch(e){const confirmed=e instanceof SettingsError&&e.status<500;(confirmed?failed:uncertain).push(c);setProgress(old=>({...old,[c]:{state:confirmed?'failed':'unknown',message:(confirmed?'保存失败':'保存结果待核对')+'：'+(e as Error).message}}));}
+  }
+  setNotice([done.length?done.map(c=>labels[c]).join('、')+'配置已保存。':'',failed.length?failed.map(c=>labels[c]).join('、')+'保存失败，请按各项提示处理。':'',uncertain.length?uncertain.map(c=>labels[c]).join('、')+'未取得明确保存结果，已尝试重新读取服务器配置，请核对后再操作。':'',done.length?'保存未调用生成接口；实际连通和成品需要另行测试。':''].join(''));
+  if(failed.length||uncertain.length){try{await read()}catch{setConfigs(null);setNotice(old=>old+' 最新配置读取失败，请重新读取后继续。')}}
+  if(done.length===chosen.length)setKey('');setBusy(false);
+ }
+ async function testText(){if(!configs||busy||!testConsent)return;setBusy(true);setTextTest('正在测试已保存的文字配置…');try{const result=await call<{message:string;latencyMs:number}>('/api/platform/ai-settings/test','POST',{revision:configs.text.revision,consent:true},90000);setTextTest(result.message+'（'+result.latencyMs+' ms）。仅代表本次短文字请求通过。')}catch(e){setTextTest('文字测试未通过：'+(e as Error).message)}finally{setBusy(false);setTestConsent(false)}}
+ return <div className="services-workspace">{notice&&<p className="tenant-alert" role="status">{notice}</p>}{!configs?<section className="tenant-panel"><p>{busy?'正在读取平台服务…':'请以平台管理员身份登录后读取配置。'}</p><a href="/login?return_to=/platform/services">登录账号</a><button disabled={busy} onClick={()=>void load()}>重新读取</button></section>:<>
+  <section className="services-status" aria-label="已保存的平台服务配置">{capabilities.map(c=>{const Icon=icons[c],ready=configs[c].enabled&&configs[c].hasKey;return <article key={c}><Icon size={21}/><strong>{labels[c]}服务</strong><span className={ready?'is-ready':''}>{ready?'配置已启用':'配置未启用'}</span><small>{configs[c].model||'尚未设置模型'}<br/>配置状态不代表生成测试通过</small></article>})}</section>
+  <section className="tenant-panel services-connect"><div className="services-section-title"><div><span>管理员填写 · 密钥由服务器加密保存</span><h2>连接平台 AI 服务</h2><p>先选服务预设，再填写一次 API Key，用于勾选的能力。</p></div><CheckCircle2 size={26}/></div>
+   <div className="services-presets" aria-label="选择服务预设"><button type="button" disabled={busy} aria-pressed={preset==='apimart'} onClick={()=>choosePreset('apimart')}>使用 APIMart 预设<span>文字 + 图片 + 视频</span></button><button type="button" disabled={busy} aria-pressed={preset==='ark'} onClick={()=>choosePreset('ark')}>使用火山方舟预设<span>保留原有接入方式</span></button></div>
+   {!preset?<p className="services-note">上方展示当前已保存配置。选择预设会填写下方表单，点击保存后才会更新所选服务。</p>:<form onSubmit={save}><fieldset disabled={busy||capabilities.some(c=>checked[c]&&!configs[c].encryptionReady)} className="ai-fields">
+    <label>{presets[preset].name} API Key<input type="password" autoComplete="new-password" spellCheck={false} maxLength={4096} value={key} onChange={e=>setKey(e.target.value)} placeholder="在这里粘贴一次，用于下方勾选的能力"/></label><p className="services-note">同一服务已经保存密钥时可留空保留。切换服务需填写对应密钥；保存后不回显密钥原文。</p>
+    <div className="services-capabilities">{capabilities.map(c=>{const service=presets[preset][c];return <div key={c} className={checked[c]?'is-selected':''}><label className="services-check"><input type="checkbox" checked={checked[c]} disabled={!service} onChange={e=>setChecked(old=>({...old,[c]:e.target.checked}))}/><strong>{labels[c]}服务</strong></label>{!service?<p className="services-note">视频可在高级设置中单独配置。</p>:checked[c]&&<><label>{labels[c]}模型 ID<input required value={models[c]} maxLength={120} onChange={e=>setModels(old=>({...old,[c]:e.target.value}))} placeholder={c==='text'?'文字模型 / 接入点 ID':c==='image'?'图片模型 ID':'视频模型 ID'}/></label><small className="services-endpoint">{service.endpoint}</small>{preset==='apimart'&&c==='image'&&<small>标准图片：2K、medium，每次 1 张。质量由服务器配置。</small>}</>}{preset==='apimart'&&c==='video'&&checked[c]&&<small>Seedance 2.0 Mini：15 秒、720p，每次 1 条。</small>}{progress[c]&&<small role="status" className={'services-progress is-'+progress[c]!.state}>{progress[c]!.message}</small>}</div>})}</div>
+    <p className="services-note">只更新勾选的服务。模型 ID 需已在服务商账号开通；保存不会发起生成。</p><button type="submit" disabled={!capabilities.some(c=>checked[c])}>{busy?'正在处理…':'保存并启用所选服务'}<ArrowUpRight size={15}/></button>
+   </fieldset></form>}{preset&&capabilities.some(c=>checked[c]&&!configs[c].encryptionReady)&&<p className="tenant-alert">请先由运维配置服务器密钥加密环境，再保存 API Key。</p>}
+  </section>
+  <section className="tenant-panel services-verification"><h2>分别验收已保存的服务</h2><p className="services-note">测试会调用服务商并消耗额度。保存成功与真实生成成功分别记录。</p><div className="services-test-grid"><div><h3>文字连接测试</h3><label className="services-check"><input type="checkbox" checked={testConsent} disabled={busy||!configs.text.hasKey} onChange={e=>setTestConsent(e.target.checked)}/>我确认发送一条短请求，使用服务商额度</label><button type="button" disabled={busy||!configs.text.hasKey||!testConsent} onClick={()=>void testText()}>测试已保存的文字配置</button>{textTest&&<p role="status" className="services-note">{textTest}</p>}<small>有未保存的表单修改时，测试仍使用上方已保存的配置。</small></div><div><h3>图片与视频成品验收</h3><p className="services-note">到创作室核对内容后提交，查看进度、成品及下载结果。此页不推断成品测试状态。</p><a href="/account/studio?type=image&provider=platform">前往图片试生成（消耗服务商额度） <ArrowUpRight size={13}/></a><a href="/account/studio?type=video&provider=platform">前往视频试生成（消耗服务商额度） <ArrowUpRight size={13}/></a></div></div></section>
+  <details className="services-advanced"><summary>高级设置与其他服务商</summary><p>分别调整已有服务、更换服务商或停用能力。</p><a href="/platform/ai">文字服务设置</a><a href="/platform/media">图片与视频服务设置</a><a href="/platform">品牌账号与商户权限</a><button disabled={busy} onClick={()=>void load()}>重新读取配置</button></details>
+ </>}</div>;
+}

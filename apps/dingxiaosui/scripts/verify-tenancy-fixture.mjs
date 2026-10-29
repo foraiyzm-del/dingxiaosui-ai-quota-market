@@ -1,0 +1,25 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+const root=path.resolve(import.meta.dirname,'..');process.chdir(root);
+if(JSON.parse(fs.readFileSync('.openai/hosting.json','utf8')).project_id)throw Error('Only isolated local test copies allowed');
+const directory='.wrangler/state/v3/d1/miniflare-D1DatabaseObject';
+const db=new DatabaseSync(path.join(directory,fs.readdirSync(directory).find(x=>x.endsWith('.sqlite'))));db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000');
+const state=JSON.parse(fs.readFileSync('.local-test/private-session.json','utf8'));
+const results=[];
+function constraint(name,sql,args){db.exec('SAVEPOINT constraint_test');try{assert.throws(()=>db.prepare(sql).run(...args));results.push({name,passed:true})}finally{db.exec('ROLLBACK TO constraint_test; RELEASE constraint_test')}}
+constraint('cannot add a second active owner','INSERT INTO merchant_memberships VALUES (?,?,?,?,?)',[state.A.id,state.users.ownerB.id,'owner','active','test']);
+constraint('invalid roles rejected','UPDATE merchant_memberships SET role=? WHERE merchant_id=? AND user_id=?',['platform-admin',state.A.id,state.users.memberA.id]);
+constraint('orphan memberships rejected','INSERT INTO merchant_memberships VALUES (?,?,?,?,?)',['missing-merchant',state.users.ownerB.id,'member','active','test']);
+constraint('duplicate identity rejected','INSERT INTO auth_identities VALUES (?,?,?,?,?)',['duplicate-test',state.users.ownerB.id,'local-test','test-owner-a','test']);
+constraint('duplicate public slug rejected','UPDATE merchant_shops SET slug=? WHERE id=?',[state.A.slug,state.B.shopId]);
+constraint('invalid shop slug rejected','UPDATE merchant_shops SET slug=? WHERE id=?',['../private',state.A.shopId]);
+constraint('invalid merchant status rejected','UPDATE merchants SET status=? WHERE id=?',['unknown',state.A.id]);
+const shop=db.prepare('SELECT name,description,public_contact,slug FROM merchant_shops WHERE id=?').get(state.A.shopId);
+assert.equal(shop.name,'A 店铺 · 浏览器保存验收');
+const created=db.prepare("SELECT m.status,s.slug,u.display_name FROM merchants m JOIN merchant_shops s ON s.merchant_id=m.id JOIN merchant_memberships mm ON mm.merchant_id=m.id JOIN users u ON u.id=mm.user_id WHERE s.slug='ui-proof-shop'").get();
+assert.equal(created.status,'disabled');assert.equal(created.display_name,'测试商户 B 负责人');
+results.push({name:'browser save reached actual SQLite',passed:true,shop},{name:'browser merchant creation and disable reached SQLite',passed:true,merchant:created});
+assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);db.close();
+fs.writeFileSync('.local-test/constraints-and-browser.json',JSON.stringify({at:new Date().toISOString(),results},null,2));console.log('PASS',results.length,'database constraint and browser-persistence checks');

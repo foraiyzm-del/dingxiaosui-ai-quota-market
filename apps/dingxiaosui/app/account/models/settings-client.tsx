@@ -1,0 +1,103 @@
+'use client';
+import {useEffect,useRef,useState} from 'react';
+
+type Capability='text'|'image'|'video';
+type Model={id:string;name:string;kind:string;capability:Capability;endpoint:string;model:string;jsonMode:number;revision:number};
+type Defaults=Record<Capability,string|null>;
+type Settings={models:Model[];defaultModelId:string|null;defaultModelIds?:Defaults;allowedHosts:string[];encryptionReady:boolean};
+type Provider={id:string;name:string;kind:string;endpoints:Partial<Record<Capability,string>>};
+type Step={capability:Capability;name:string;kind:string;endpoint:string;model:string;jsonMode:boolean;id?:string;revision?:number;status:'pending'|'saving'|'saved'|'done'|'error'|'unknown';message?:string};
+type Run={steps:Step[];key:string;blocked:boolean};
+const capabilities:Capability[]=['text','image','video'];
+const labels:Record<Capability,string>={text:'文字',image:'图片',video:'视频'};
+const descriptions:Record<Capability,string>={text:'营销文案、经营助手与办公草稿',image:'商品主图、场景图与品牌画面',video:'商品展示与场景短视频'};
+const platformDefaults:Defaults={text:null,image:null,video:null};
+const providers:Provider[]=[
+ {id:'ark',name:'火山方舟',kind:'ark',endpoints:{text:'https://ark.cn-beijing.volces.com/api/v3/chat/completions',image:'https://ark.cn-beijing.volces.com/api/v3/images/generations',video:'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks'}},
+ {id:'openai',name:'OpenAI',kind:'openai-compatible',endpoints:{text:'https://api.openai.com/v1/chat/completions',image:'https://api.openai.com/v1/images/generations'}},
+ {id:'deepseek',name:'DeepSeek',kind:'openai-compatible',endpoints:{text:'https://api.deepseek.com/chat/completions'}},
+ {id:'qwen',name:'阿里云千问',kind:'qwen',endpoints:{text:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'}},
+ {id:'siliconflow',name:'硅基流动',kind:'openai-compatible',endpoints:{text:'https://api.siliconflow.cn/v1/chat/completions'}},
+ {id:'moonshot',name:'Moonshot',kind:'openai-compatible',endpoints:{text:'https://api.moonshot.cn/v1/chat/completions'}}
+];
+const emptyFields:Record<Capability,string>={text:'',image:'',video:''};
+const emptyEdit={id:'',name:'',kind:'ark',capability:'text' as Capability,endpoint:providers[0].endpoints.text!,model:'',apiKey:'',jsonMode:true,revision:0};
+class RequestFailure extends Error{constructor(message:string,readonly uncertain=false){super(message)}}
+async function call<T>(url:string,method='GET',body?:unknown):Promise<T>{
+ let response:Response;try{response=await fetch(url,{method,cache:'no-store',signal:AbortSignal.timeout(url==='/api/account/models/test'?75000:15000),headers:{'content-type':'application/json'},...(body!==undefined?{body:JSON.stringify(body)}:{})})}catch{throw new RequestFailure('连接中断或超时，操作结果尚未确认',method!=='GET')}
+ let data:{error?:string};try{data=await response.json()}catch{throw new RequestFailure('服务响应异常，操作结果尚未确认',method!=='GET')}
+ if(!response.ok)throw new RequestFailure(data.error||'操作未完成',response.status>=500);return data as T;
+}
+export default function ModelSettings(){
+ const [models,setModels]=useState<Model[]>([]),[selected,setSelected]=useState<Defaults>(platformDefaults),[ready,setReady]=useState(false),[loaded,setLoaded]=useState(false),[busy,setBusy]=useState(false),[notice,setNotice]=useState(''),[hosts,setHosts]=useState<string[]>([]),[encryptionReady,setEncryptionReady]=useState(false);
+ const [advancedOpen,setAdvancedOpen]=useState(false),[savedOpen,setSavedOpen]=useState(false),[providerId,setProviderId]=useState('ark'),[enabled,setEnabled]=useState<Record<Capability,boolean>>({text:true,image:false,video:false}),[modelIds,setModelIds]=useState(emptyFields),[endpoints,setEndpoints]=useState<Record<Capability,string>>({...emptyFields,...providers[0].endpoints}),[targets,setTargets]=useState<Record<Capability,string>>(emptyFields),[apiKey,setApiKey]=useState(''),[run,setRun]=useState<Run|null>(null),[editForm,setEditForm]=useState(emptyEdit),[testConsent,setTestConsent]=useState(false);
+ const identityRef=useRef<string|null>(null),epochRef=useRef(0);
+ const provider=providers.find(p=>p.id===providerId)!,allPlatform=capabilities.every(c=>!selected[c]);
+ function clearSensitive(){epochRef.current++;identityRef.current=null;setReady(false);setModels([]);setApiKey('');setRun(null);setEditForm(emptyEdit);setTestConsent(false)}
+ async function verifyIdentity(){const who=await call<{user:{id:string}}>('/api/me');if(identityRef.current&&identityRef.current!==who.user.id){clearSensitive();window.location.reload();throw Error('账号已切换，正在重新读取')}return who.user.id}
+ async function load(){const epoch=epochRef.current,before=await verifyIdentity(),d=await call<Settings>('/api/account/models'),after=await verifyIdentity();if(epoch!==epochRef.current)return;if(before!==after){clearSensitive();window.location.reload();throw Error('账号已切换，正在重新读取')}identityRef.current=before;setModels(d.models.map(m=>({...m,capability:m.capability||'text'})));setSelected(d.defaultModelIds||{text:d.defaultModelId,image:null,video:null});setHosts(d.allowedHosts);setEncryptionReady(d.encryptionReady);setReady(true);setLoaded(true)}
+ useEffect(()=>{load().catch(e=>{setNotice(e.message);setLoaded(true)});const changed=(event:StorageEvent)=>{if(event.key==='zdx-auth-change-v1'){clearSensitive();window.location.reload()}};window.addEventListener('storage',changed);return()=>window.removeEventListener('storage',changed)},[]);
+ async function write<T>(method:string,body:unknown){await verifyIdentity();return call<T>('/api/account/models',method,body)}
+ async function action(work:()=>Promise<void>){if(busy)return;setBusy(true);setNotice('');try{await work()}catch(e){setNotice((e as Error).message)}finally{setBusy(false)}}
+ async function choose(capability:Capability,modelId:string|null){await write('PUT',{modelId,capability});setSelected(previous=>({...previous,[capability]:modelId}));await load();setNotice(`${labels[capability]}服务已更新，下一次生成时生效。`)}
+ async function usePlatform(){
+  const done:Capability[]=[],failed:string[]=[];for(const capability of capabilities){try{await write('PUT',{modelId:null,capability});done.push(capability);setSelected(previous=>({...previous,[capability]:null}))}catch(e){failed.push(`${labels[capability]}：${(e as Error).message}`)}}
+  let refreshed=true;try{await load()}catch{refreshed=false}
+  if(failed.length)setNotice(`已确认切换：${done.map(c=>labels[c]).join('、')||'暂无'}。未确认项目：${failed.join('；')}。请重新读取后核对，可再次切换。`);
+  else setNotice(refreshed?'文字、图片、视频都已使用平台服务，无需填写个人 API。若服务尚未开通，请联系平台管理员。':'三个切换请求已返回成功，但最新状态尚未读取，请刷新确认。');
+ }
+ function providerChange(id:string){const next=providers.find(p=>p.id===id)!;setProviderId(id);setEnabled({text:true,image:false,video:false});setModelIds(emptyFields);setEndpoints({...emptyFields,...next.endpoints});setTargets(emptyFields);setApiKey('');setRun(null)}
+ function targetFor(capability:Capability){if(targets[capability]==='new')return undefined;const explicit=models.find(m=>m.id===targets[capability]&&m.capability===capability);if(explicit)return explicit;return models.find(m=>m.id===selected[capability]&&m.capability===capability&&m.kind===provider.kind&&m.endpoint===endpoints[capability])||models.find(m=>m.capability===capability&&m.kind===provider.kind&&m.endpoint===endpoints[capability])}
+ const selectedCapabilities=capabilities.filter(c=>enabled[c]&&provider.endpoints[c]);
+ const newCount=selectedCapabilities.filter(c=>!targetFor(c)).length;
+ const formLocked=busy||!!run||!encryptionReady;
+ async function connect(){
+  let current=run;
+  if(current?.blocked)throw Error('有配置的保存结果尚未确认，请先重新读取并核对已保存服务，避免重复新增。');
+  if(!current){
+   if(!selectedCapabilities.length)throw Error('请至少选择一种要使用的能力');
+   if(models.length+newCount>20)throw Error(`本次需要新增 ${newCount} 条，已保存 ${models.length}/20 条。请先删除不再使用的服务。`);
+   for(const capability of selectedCapabilities){const old=targetFor(capability);if(!modelIds[capability].trim())throw Error(`请填写已开通的${labels[capability]}模型 ID`);if((!old||old.endpoint!==endpoints[capability])&&!apiKey.trim())throw Error('新增连接或更换地址时，请填写 API Key')}
+   current={key:apiKey.trim(),blocked:false,steps:selectedCapabilities.map(capability=>{const old=targetFor(capability);return {capability,name:old?.name||`${provider.name} · ${labels[capability]}服务`,kind:provider.kind,endpoint:endpoints[capability].trim(),model:modelIds[capability].trim(),jsonMode:capability==='text',...(old?{id:old.id,revision:old.revision}:{}),status:'pending'}})};
+  }
+  const working:Run={...current,steps:current.steps.map(step=>({...step}))};setRun(working);
+  function progress(){setRun({...working,steps:working.steps.map(step=>({...step}))})}
+  for(const step of working.steps){
+   if(step.status==='done')continue;
+   if(step.status!=='saved'){
+    step.status='saving';step.message='正在保存连接';progress();
+    try{const saved=await write<{id:string}>('POST',{...(step.id?{id:step.id,revision:step.revision}:{}),name:step.name,kind:step.kind,capability:step.capability,endpoint:step.endpoint,model:step.model,apiKey:working.key,jsonMode:step.jsonMode});if(!saved.id)throw new RequestFailure('保存响应缺少记录编号，结果尚未确认',true);step.id=saved.id;step.status='saved';step.message='已保存，正在设为默认';progress()}
+    catch(e){step.status=e instanceof RequestFailure&&e.uncertain?'unknown':'error';step.message=(e as Error).message;working.blocked=step.status==='unknown';progress();setNotice(`${labels[step.capability]}连接${working.blocked?'的保存结果未确认，已停止继续操作，避免重复新增。请重新读取并核对已保存服务。':'未保存成功，已停止。已完成项目会保留，可继续处理未完成项。'}${step.message}`);return}
+   }
+   try{await write('PUT',{modelId:step.id,capability:step.capability});step.status='done';step.message='已保存并设为当前服务';setSelected(previous=>({...previous,[step.capability]:step.id!}));progress()}
+   catch(e){step.status='saved';step.message=`连接已保存，默认服务未确认：${(e as Error).message}`;progress();setNotice(`${labels[step.capability]}连接已保存，默认服务未确认。再次继续只更新默认选择，不会重复新增连接。`);return}
+  }
+  setApiKey('');working.key='';progress();try{await load();setNotice(`已连接并启用${working.steps.map(s=>labels[s.capability]).join('、')}个人服务。保存不代表模型已连通；文字可测试连接，图片和视频请到 AI 创作生成验证。`)}catch{setNotice('所选连接已保存，默认选择请求已返回成功；最新状态暂时无法读取，请重新读取确认。')}
+ }
+ function edit(model:Model){setEditForm({...model,jsonMode:!!model.jsonMode,apiKey:''});setAdvancedOpen(true);setSavedOpen(true);setNotice('正在编辑已有服务；留空保留密钥，更换地址需重新填写密钥。')}
+ async function finishReview(){await load();setRun(null);setApiKey('');setSavedOpen(true);setNotice('已重新读取。请核对下方已保存的服务；重新连接会显示要更新的已有记录。')}
+ return <>
+  {notice&&<div role="status" aria-live="polite" className="notice">{notice}</div>}
+  {!ready?<section className="settings-loading"><h2>{loaded?'登录后使用 AI 服务':'正在读取 AI 设置…'}</h2><p>{loaded?'平台服务和个人设置都归属当前账号。请登录后继续；已经登录可重新读取。':'正在确认当前账号与默认服务。'}</p>{loaded&&<div className="settings-actions"><a className="settings-primary-link" href="/login?return_to=/account/models">登录 / 注册</a><button className="settings-secondary" disabled={busy} onClick={()=>void action(load)}>重新读取</button></div>}</section>:<>
+   <section className="platform-recommendation"><div className="platform-intro"><span className="settings-eyebrow">推荐使用方式</span><h2>使用平台服务</h2><p>直接写文案、生成商品图片和短视频。<br/>平台统一提供服务，你不需要填写 API Key。</p><div className="settings-actions"><button className="platform-use-button" disabled={busy||allPlatform} onClick={()=>void action(usePlatform)}>{busy?'正在处理…':allPlatform?'当前已使用平台服务':'全部切换为平台服务'}</button><a className="settings-studio-link" href="/account/studio">进入 AI 创作 <span aria-hidden="true">↗</span></a></div><small>文字创作需先兑换激活码；图片和视频需由平台另行开通。服务暂停时请联系平台管理员。</small></div><div className="platform-service-cards">{capabilities.map(capability=><div className="platform-service-card" key={capability}><span className={`service-icon service-icon-${capability}`} aria-hidden="true">{capability==='text'?'文':capability==='image'?'图':'影'}</span><div><strong>{labels[capability]}创作</strong><p>{descriptions[capability]}</p><span className={selected[capability]?'service-source is-personal':'service-source'}>{selected[capability]?`个人服务 · ${models.find(m=>m.id===selected[capability])?.name||'已选择'}`:'平台统一提供'}</span></div></div>)}</div></section>
+   <div className="settings-platform-note"><span aria-hidden="true">✓</span><p>兑换平台体验码后，无需设置个人接口。只有希望使用自己在服务商处的账号和额度时，才需要展开下面的高级设置。</p></div>
+   <details className="settings-advanced" open={advancedOpen} onToggle={event=>setAdvancedOpen(event.currentTarget.open)}><summary><div><span className="settings-eyebrow">可选</span><h2>连接自己的 AI 服务</h2><p>高级设置 · 使用你自己的服务商额度</p></div><span className="settings-details-icon" aria-hidden="true">＋</span></summary><div className="settings-advanced-content">
+    <div className="settings-section-title"><div><h3>选服务商，填写一次密钥</h3><p>勾选要使用的能力，填写控制台已开通的模型 ID。接口地址会自动填写。</p></div><span className="settings-private-label">密钥加密保存</span></div>
+    {!encryptionReady&&<div className="notice">平台尚未配置密钥加密环境。请联系管理员；个人服务暂时不能保存。</div>}
+    <form onSubmit={event=>{event.preventDefault();void action(connect)}}><fieldset disabled={formLocked}>
+     <div className="settings-connection-fields"><label>服务商<select value={providerId} onChange={event=>providerChange(event.target.value)}>{providers.map(p=><option key={p.id} value={p.id}>{p.name}{p.id==='ark'?' · 文字 / 图片 / 视频':p.id==='openai'?' · 文字 / 图片':''}</option>)}</select></label><label>API Key<input type="password" autoComplete="new-password" spellCheck={false} maxLength={4096} value={apiKey} onChange={event=>setApiKey(event.target.value)} placeholder="填一次，用于本次选择的能力"/><small>已有连接可留空保留；新增连接必须填写。不在页面显示已保存的密钥。</small></label></div>
+     <div className="connection-capabilities">{capabilities.map(capability=>{const supported=!!provider.endpoints[capability],old=targetFor(capability);return <div className={`connection-capability ${enabled[capability]&&supported?'is-selected':''} ${!supported?'is-unavailable':''}`} key={capability}><label className="connection-toggle"><input type="checkbox" disabled={!supported} checked={supported&&enabled[capability]} onChange={event=>setEnabled(previous=>({...previous,[capability]:event.target.checked}))}/><span><strong>{labels[capability]}创作</strong><small>{supported?descriptions[capability]:'此服务商当前未适配此能力'}</small></span></label>{supported&&enabled[capability]&&<div className="connection-capability-fields"><label>{labels[capability]}模型 ID<input required maxLength={120} value={modelIds[capability]} onChange={event=>setModelIds(previous=>({...previous,[capability]:event.target.value}))} placeholder={capability==='image'?'填写已开通的生图模型 ID':capability==='video'?'填写已开通的视频模型 ID':'填写已开通的文字模型名称或接入点 ID'}/></label><p className="connection-target-note">{old?`将更新已有服务「${old.name}」，保存后设为${labels[capability]}默认。`:`将新增一项${labels[capability]}服务，保存后设为默认。`}</p><details className="connection-endpoint"><summary>接口地址与已有记录</summary><label>完整接口地址<input type="url" required maxLength={500} value={endpoints[capability]} onChange={event=>setEndpoints(previous=>({...previous,[capability]:event.target.value}))}/></label><label>保存到<select value={targets[capability]||old?.id||'new'} onChange={event=>setTargets(previous=>({...previous,[capability]:event.target.value}))}><option value="new">新增一项服务</option>{models.filter(m=>m.capability===capability).map(m=><option key={m.id} value={m.id}>更新：{m.name}</option>)}</select></label><small>更换服务地址时须重新填写对应密钥；自定义域名需由运维加入允许列表。</small></details></div>}</div>})}</div>
+    </fieldset>
+    {run&&<div className="connection-progress" aria-live="polite"><h4>本次连接进度</h4>{run.steps.map(step=><div className={`connection-step state-${step.status}`} key={step.capability}><strong>{labels[step.capability]}</strong><span>{step.status==='pending'?'尚未处理':step.message}</span></div>)}</div>}
+    <div className="settings-actions"><button type="submit" disabled={busy||!encryptionReady||!!run?.blocked||!!run?.steps.every(step=>step.status==='done')||(!run&&!selectedCapabilities.length)}>{busy?'正在连接…':run?run.steps.every(step=>step.status==='done')?'已完成本次连接':'继续处理未完成项':'连接并使用所选能力'}</button>{run&&<button type="button" className="settings-secondary" disabled={busy} onClick={()=>void action(finishReview)}>{run.blocked?'重新读取并核对保存结果':'结束本次连接 / 重新填写'}</button>}</div><p className="settings-save-explanation">一次操作按所选能力逐项保存并设为默认；进度会逐项显示。未选择的能力继续使用原来的服务。保存配置不会发起模型调用。</p>
+    </form>
+    <details className="saved-services" open={savedOpen} onToggle={event=>setSavedOpen(event.currentTarget.open)}><summary><div><h3>管理已保存的服务 <span>{models.length}/20</span></h3><p>编辑、删除、测试连接，或分别选择默认服务。</p></div><span aria-hidden="true">⌄</span></summary><div className="saved-services-content"><div className="model-defaults">{capabilities.map(capability=><label key={capability}>{labels[capability]}默认服务<select disabled={busy} value={selected[capability]||''} onChange={event=>void action(()=>choose(capability,event.target.value||null))}><option value="">平台统一服务</option>{models.filter(m=>m.capability===capability).map(m=><option key={m.id} value={m.id}>{m.name} · {m.model}</option>)}</select></label>)}</div>
+     {models.length===0?<div className="model-empty"><b>还没有个人服务，也可以兑换次数使用平台文字服务。</b><p>需要使用自己的额度时，再填写上面的连接信息。</p></div>:models.map(model=><article className="model-row" key={model.id}><div className="model-row-heading"><span className="model-capability">{labels[model.capability]}</span><strong>{model.name}</strong>{selected[model.capability]===model.id&&<span className="model-current">当前使用</span>}</div><p>{model.model}</p><details className="model-address"><summary>查看接口地址</summary><small>{model.endpoint}</small></details><div className="model-row-actions"><button className="settings-secondary" disabled={busy} onClick={()=>edit(model)}>编辑</button><button className="settings-secondary" disabled={busy||selected[model.capability]===model.id} onClick={()=>void action(()=>choose(model.capability,model.id))}>使用这项服务</button>{model.capability==='text'?<button className="settings-secondary" disabled={busy||!testConsent} onClick={()=>void action(async()=>{await verifyIdentity();const data=await call<{message:string}>('/api/account/models/test','POST',{id:model.id,revision:model.revision,consent:true});setNotice(data.message)})}>测试文字连接</button>:<a href="/account/studio">去生成验证</a>}<button className="model-danger" disabled={busy} onClick={()=>{if(window.confirm(`删除「${model.name}」？如果正在使用，将切回平台${labels[model.capability]}服务。`))void action(async()=>{await write('DELETE',{id:model.id});if(editForm.id===model.id)setEditForm(emptyEdit);await load();setNotice('服务已删除；对应默认选择已重新读取。')})}}>删除</button></div></article>)}
+     {models.some(m=>m.capability==='text')&&<label className="model-check"><input type="checkbox" checked={testConsent} disabled={busy} onChange={event=>setTestConsent(event.target.checked)}/> 同意文字连接测试发送一条短请求，可能消耗我在服务商处的额度</label>}<small>图片和视频在 AI 创作提交真实生成任务验证；提交前会提示额度消耗。</small>
+     {editForm.id&&<form className="model-edit-form" onSubmit={event=>{event.preventDefault();void action(async()=>{await write('POST',editForm);setEditForm(emptyEdit);await load();setNotice('已有服务已更新。保存配置不代表已验证连通。')})}}><h3>编辑{labels[editForm.capability]}服务</h3><fieldset disabled={busy||!encryptionReady}><label>显示名称<input required maxLength={60} value={editForm.name} onChange={event=>setEditForm({...editForm,name:event.target.value})}/></label><label>模型名称 / 接入点 ID<input required maxLength={120} value={editForm.model} onChange={event=>setEditForm({...editForm,model:event.target.value})}/></label><label>API Key（留空保留）<input type="password" autoComplete="new-password" spellCheck={false} maxLength={4096} value={editForm.apiKey} onChange={event=>setEditForm({...editForm,apiKey:event.target.value})}/></label><details><summary>编辑接口参数</summary><label>接口类型<select value={editForm.kind} onChange={event=>setEditForm({...editForm,kind:event.target.value})}>{editForm.capability!=='video'&&<option value="openai-compatible">OpenAI 兼容</option>}{editForm.capability==='text'&&<option value="qwen">千问</option>}<option value="ark">火山方舟</option></select></label><label>完整接口地址<input type="url" required maxLength={500} value={editForm.endpoint} onChange={event=>setEditForm({...editForm,endpoint:event.target.value})}/></label>{editForm.capability==='text'&&<label className="model-check"><input type="checkbox" checked={editForm.jsonMode} onChange={event=>setEditForm({...editForm,jsonMode:event.target.checked})}/> 请求 JSON 格式输出</label>}</details><button type="submit">保存修改</button><button type="button" className="settings-secondary" onClick={()=>setEditForm(emptyEdit)}>取消编辑</button></fieldset></form>}
+    </div></details><details className="settings-hosts"><summary>接口支持范围与允许的域名</summary><p>文字支持 Chat Completions，图片支持火山方舟与 OpenAI Images，视频支持火山方舟任务接口。模型须已在服务商开通，本页不预填或猜测模型 ID。</p><small>{hosts.join('、')}</small></details>
+   </div></details>
+  </>}
+ </>;
+}
+

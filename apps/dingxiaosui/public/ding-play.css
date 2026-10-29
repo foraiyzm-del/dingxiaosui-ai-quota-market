@@ -1,0 +1,43 @@
+.ding-play-dock{position:fixed;right:191px;bottom:22px;z-index:1001;display:flex;align-items:center;gap:7px;font-family:'Noto Sans SC',system-ui,sans-serif}
+.ding-play-launch{position:relative;isolation:isolate;display:block;width:56px;height:56px;flex:none;padding:2px;border:1px solid #d9b8e2;border-radius:50%;background:radial-gradient(circle at 30% 20%,#fff,#ead6f1 75%);box-shadow:0 9px 28px #27142f75;cursor:pointer;overflow:visible;transition:transform .2s,box-shadow .2s}
+.ding-play-launch:hover{transform:translateY(-4px) rotate(-5deg);box-shadow:0 14px 35px #27142f8c}
+.ding-play-launch>img{width:100%;height:100%;object-fit:cover;object-position:center 36%;border-radius:50%;transform:scale(1.24);pointer-events:none}
+.ding-play-dock:not(.ding-play-dock-hidden) .ding-play-launch>img{animation:ding-idle 3.4s ease-in-out infinite}
+/* Keep the workspace corner companion still until the user interacts with it. */
+.workbench-page .ding-play-dock .ding-play-launch>img{animation:none}
+.ding-flyer{position:fixed;left:0;top:0;z-index:1800;width:72px;height:72px;pointer-events:none;will-change:transform,opacity;filter:drop-shadow(0 13px 13px #59366c6e)}
+.ding-flyer img{width:100%;height:100%;object-fit:contain}.ding-flyer i{position:absolute;right:-8px;top:4px;color:#f0cd69;font-size:22px;font-style:normal;text-shadow:0 0 8px #fff}
+.ding-play-tip{padding:8px 10px;border:1px solid #d9b8e2;border-radius:12px;background:#fff9fedf;color:#684873;font-size:10px;font-weight:900;box-shadow:0 6px 18px #291a353d;white-space:nowrap}
+.ding-play-dock-hidden{opacity:0;pointer-events:none}
+.ding-play-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.ding-chat-root.open~.ding-play-dock{display:none}
+.ding-play-active{isolation:isolate}
+.ding-play-active>img{opacity:0!important}
+.ding-action-art{position:absolute;z-index:5;left:8.5%;top:0;width:83%;height:100%;background-image:url('ding-xiaosui-actions-v1.webp');background-repeat:no-repeat;background-size:200% 200%;pointer-events:none;filter:drop-shadow(0 14px 14px #24132a76)}
+[data-ding-action="blink"] .ding-action-art{background-position:0 0;animation:ding-blink .72s ease-in-out 2}
+[data-ding-action="wave"] .ding-action-art{background-position:100% 0;animation:ding-wave .63s ease-in-out 3}
+[data-ding-action="tap"] .ding-action-art{background-position:0 100%;animation:ding-tap .55s ease-in-out 3}
+[data-ding-action="super"] .ding-action-art{background-position:100% 100%;animation:ding-transform .9s cubic-bezier(.2,1.5,.35,1) both}
+.ding-action-bubble{position:absolute!important;z-index:8;left:50%!important;right:auto!important;top:-38px!important;bottom:auto!important;transform:translateX(-50%);display:block!important;width:max-content!important;max-width:min(260px,70vw);padding:8px 11px!important;border:1px solid #e7ceeb!important;border-radius:999px!important;background:#fff9fe!important;color:#684376!important;font:900 11px/1.3 'Noto Sans SC',sans-serif!important;text-align:center!important;box-shadow:0 9px 24px #2913316e!important;white-space:nowrap;pointer-events:none;animation:ding-bubble .23s ease-out both}
+.ding-action-sparks{position:absolute!important;z-index:7;left:10%!important;right:10%!important;top:15%!important;bottom:auto!important;display:block!important;width:auto!important;padding:0!important;background:none!important;border:0!important;box-shadow:none!important;color:#ffe690!important;font-size:23px!important;letter-spacing:.75em;white-space:nowrap;pointer-events:none;animation:ding-spark 1.2s ease-out infinite}
+.ding-play-launch .ding-action-art{left:0;top:0;width:100%;height:100%;border-radius:50%}
+.ding-play-launch .ding-action-bubble{top:-45px!important}
+.hero-mascot .ding-action-art{left:8.5%;top:0;width:83%;height:calc(100% - 24px)}
+.hero-mascot .ding-action-bubble{top:10px!important}
+.workbench-mascot-button .ding-action-art{left:auto;right:5%;top:1%;width:83%;height:91%}
+.workbench-mascot-button .ding-action-bubble{top:4%!important}
+.media-mascot-portal .ding-action-art{left:9%;right:auto;top:0;bottom:auto;width:82%;height:82%;display:block;padding:0;border:0;border-radius:0;background-color:transparent;background-image:url('ding-xiaosui-actions-v1.webp');background-repeat:no-repeat;background-size:200% 200%;box-shadow:none;backdrop-filter:none}
+.media-mascot-portal .ding-action-bubble{top:1%!important}
+.ding-tap-ripple{position:fixed;z-index:2000;width:15px;height:15px;transform:translate(-50%,-50%);border:2px solid #fff2a6;border-radius:50%;box-shadow:0 0 0 2px #9d69b9,0 0 22px #fff0a8;pointer-events:none;animation:ding-ripple .75s ease-out forwards}
+.hero-mascot[data-ding-action="super"] .ding-action-art,.workbench-mascot-button[data-ding-action="super"] .ding-action-art,.media-mascot-portal[data-ding-action="super"] .ding-action-art{filter:drop-shadow(0 0 16px #f7d875) drop-shadow(0 18px 15px #24132a76)}
+.ding-chat-launch img{display:none}.ding-chat-launch{padding:15px 18px}.ding-chat-launch span{white-space:nowrap}
+@keyframes ding-blink{0%,100%{transform:scale(1)}50%{transform:scale(.95,1.03) rotate(-3deg)}}
+@keyframes ding-wave{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(7deg) translateY(-5px)}}
+@keyframes ding-tap{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px) scale(1.04)}}
+@keyframes ding-transform{0%{opacity:0;transform:scale(.35) rotate(-25deg)}65%{opacity:1;transform:scale(1.15) rotate(7deg)}100%{transform:scale(1) rotate(0)}}
+@keyframes ding-spark{0%{opacity:0;transform:scale(.5) rotate(-12deg)}45%{opacity:1}100%{opacity:0;transform:translateY(-20px) scale(1.4)}}
+@keyframes ding-bubble{from{opacity:0;transform:translate(-50%,9px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes ding-ripple{to{opacity:0;width:120px;height:120px;box-shadow:0 0 0 12px #d4a9ef00}}
+@keyframes ding-idle{0%,100%{transform:scale(1.2) translateY(0)}50%{transform:scale(1.24) translateY(-3px)}}
+@media(max-width:700px){.ding-play-dock{right:157px;bottom:13px}.ding-play-launch{width:48px;height:48px}.ding-play-tip{display:none}.workbench-page .ding-play-dock{right:74px;bottom:80px}.workbench-page .ding-chat-launch span{display:block;font-size:0}.workbench-page .ding-chat-launch span::after{content:'聊';font-size:13px}.h5-shell~.ding-chat-root{bottom:74px}.h5-shell~.ding-play-dock{right:160px;bottom:76px}.hero-mascot .ding-action-bubble{top:-24px!important}.media-mascot-portal .ding-action-bubble{top:-30px!important}}
+@media(prefers-reduced-motion:reduce){.ding-play-launch,.ding-play-launch>img,.ding-action-art,.ding-action-bubble,.ding-action-sparks,.ding-tap-ripple{animation:none!important;transition:none!important}.ding-flyer{display:none}}

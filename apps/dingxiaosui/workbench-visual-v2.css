@@ -1,0 +1,58 @@
+/* 紫丁香工作台：统一的立体花园视觉与丁小穗入口 */
+.workbench-page .main-column{background:radial-gradient(circle at 87% 5%,#efe4f2 0,transparent 28%),radial-gradient(circle at 8% 58%,#fff1e5 0,transparent 26%),#f8f5f8}
+.workbench-page .sidebar{background:linear-gradient(166deg,#271c38 0%,#251b34 51%,#1d1729 100%);box-shadow:inset -1px 0 #e9c9ee1b,12px 0 36px #2a173014}
+.workbench-page .workspace-label{background:#ffffff0c;border-color:#ebd5f02d;box-shadow:inset 0 1px #ffffff17}
+.workbench-page .nav-item{border:1px solid transparent}
+.workbench-page .nav-item.is-active{background:linear-gradient(110deg,#79568c,#513762);border-color:#e6c8ec49;box-shadow:inset 0 1px #ffffff2d,0 10px 24px #150d20a3}
+.workbench-page .sidebar-tip{background:linear-gradient(145deg,#443154,#30243f);border-color:#a886b245;box-shadow:inset 0 1px #ffffff21,0 14px 34px #100b1f4b}
+.workbench-page .topbar{background:#fffdfdee;border-color:#eadfea;backdrop-filter:blur(20px);box-shadow:0 7px 24px #452d5210}
+.workbench-page .mascot-top-entry{width:42px;height:42px;border:1px solid #d8b7df;border-radius:15px;background:radial-gradient(circle at 25% 15%,#fff,#ead9ef 70%);padding:0;overflow:hidden;box-shadow:inset 0 1px #fff,0 6px 14px #6c41743b;transition:transform .2s,box-shadow .2s}
+.workbench-page .mascot-top-entry:hover{transform:translateY(-3px) rotate(-5deg);box-shadow:0 12px 21px #6c41745e}
+.workbench-page .mascot-top-entry img{height:100%;width:100%;object-fit:contain;object-position:center bottom;transform:scale(1.48) translateY(3px)}
+.workbench-page .hero-heading{display:block;min-height:440px;padding:45px 46px;border-radius:27px;background:linear-gradient(100deg,#261834f5 0%,#3b2850df 56%,#63436279 100%),url('lilac-harvest-hero.webp') center 49% / cover no-repeat;border:1px solid #d7afdf82;box-shadow:inset 0 1px #ffffff51,0 27px 60px #40244e38;isolation:isolate}
+.workbench-page .hero-heading::before{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(circle at 72% 30%,#d19fd452,transparent 31%),linear-gradient(180deg,#ffffff0e,transparent 28%)}
+.workbench-page .hero-heading>div:first-child{max-width:58%;position:relative;z-index:2}
+.workbench-page .hero-heading h1{font-size:clamp(35px,3.2vw,49px);line-height:1.23;letter-spacing:-.045em;margin:23px 0 17px;text-shadow:0 5px 18px #1c102697}
+.workbench-page .hero-heading h1 em{display:block;color:#f6d2ee}
+.workbench-page .hero-heading p{font-size:13px;line-height:1.85;color:#f6e9f5}
+.workbench-page .hero-heading .eyebrow{color:#f7cbe9}
+.workbench-page .hero-heading .eyebrow-line{background:#f7cbe9}
+.workbench-page .hero-actions .primary{background:linear-gradient(145deg,#ffe7f4,#edc7e6);border-color:#fff5fb;box-shadow:inset 0 1px #fff,0 9px 24px #14091f68;color:#402747}
+.workbench-page .hero-actions .ghost{background:#ffffff16;backdrop-filter:blur(8px);border-color:#ffffff7b;box-shadow:inset 0 1px #ffffff2b;color:#fff}
+.workbench-page .hero-art.workbench-hero-art{display:block;position:absolute;right:18px;top:12px;width:39%;height:calc(100% - 24px);pointer-events:auto;overflow:visible;opacity:1;z-index:1}
+.mascot-stage{position:absolute;inset:15% 4% 13%;border-radius:49% 51% 45% 55% / 52% 44% 56% 48%;transform:rotate(-7deg);background:radial-gradient(circle at 35% 25%,#ffeafaac 0%,#d6abd55c 35%,#6d4b8e44 68%,#49296462 100%);border:1px solid #fce5fb75;box-shadow:inset 13px 10px 24px #ffffff2b,inset -13px -18px 30px #40225069,0 24px 45px #160a2599}
+.mascot-stage::before{content:'';position:absolute;inset:-18px;border:1px solid #fff5fb42;border-radius:50%;transform:rotate(17deg)}
+.mascot-stage i{position:absolute;display:block;width:10px;height:10px;border-radius:50%;background:#fff9f2;box-shadow:0 0 15px #fff;left:14%;top:25%}
+.mascot-stage i:nth-child(2){left:auto;right:12%;top:12%;width:7px;height:7px}
+.mascot-stage i:nth-child(3){left:8%;top:auto;bottom:26%;width:5px;height:5px}
+.workbench-mascot-button{position:absolute;inset:0;display:block;width:100%;height:100%;padding:0;border:0;background:transparent;text-align:left;color:inherit;cursor:pointer}
+.workbench-mascot-button img{position:absolute;right:5%;top:1%;width:83%;height:91%;object-fit:contain;filter:drop-shadow(0 21px 16px #24112e9c);animation:dingFloat 5s ease-in-out infinite;transition:transform .3s}
+.workbench-mascot-button:hover img{transform:rotate(5deg) scale(1.035)}
+.mascot-speech{position:absolute;left:-14%;top:7%;display:grid;gap:3px;min-width:205px;padding:12px 15px;border:1px solid #fff9fc;border-radius:18px 18px 18px 4px;background:linear-gradient(155deg,#fffdfc,#f5e6f4);color:#4b3057;box-shadow:0 14px 28px #25132b80,inset 0 1px #fff;transform:rotate(-6deg)}
+.mascot-speech small{font:800 8px Georgia,serif;letter-spacing:.15em;color:#aa7ba8}
+.mascot-speech strong{font:900 18px/1.3 'Noto Sans SC',sans-serif;white-space:nowrap;letter-spacing:.02em}
+.mascot-speech em{font-style:normal;font-size:10px;color:#865895}
+.workbench-page .workbench-art-note{right:0;bottom:3px;min-width:235px;padding:12px 17px;border-radius:15px;background:#fff6fcf0;border-color:#fff;box-shadow:0 12px 30px #23122b70,inset 0 1px #fff}
+.workbench-page .metric-card,.workbench-page .panel,.workbench-page .report-card,.workbench-page .product-card,.workbench-page .media-card{border-color:#e9d9e9;background:linear-gradient(145deg,#fff,#fffafd);box-shadow:inset 0 1px #fff,0 11px 28px #4b2e5414,0 2px 7px #4b2e540a}
+.workbench-page .metric-card{border-radius:17px;position:relative;overflow:hidden}
+.workbench-page .metric-card::before{content:'';position:absolute;right:-16px;top:-25px;width:95px;height:95px;border-radius:50%;background:radial-gradient(circle,#e8c9ed65,transparent 69%);pointer-events:none}
+.workbench-page .panel,.workbench-page .media-card{border-radius:18px}
+.workbench-page .plus-shortcuts button{background:linear-gradient(145deg,#fff,#fbf4fc);border-color:#e9d4ea;border-radius:18px;box-shadow:inset 0 1px #fff,0 14px 28px #4b2e541a}
+.workbench-page .plus-shortcuts button:hover,.workbench-page .media-card:hover{box-shadow:inset 0 1px #fff,0 20px 36px #4b2e542d}
+.workbench-page .media-home-entry{border-radius:18px;background:linear-gradient(120deg,#fff8fd,#ecdaf0 65%,#e0c6eb);box-shadow:inset 0 1px #fff,0 13px 30px #542b5c20}
+.workbench-page .media-hero{min-height:385px;padding:40px 280px 42px 43px;border-radius:27px;border:1px solid #d7afdf82;background:radial-gradient(circle at 83% 24%,#c78ec985,transparent 33%),linear-gradient(125deg,#211429 4%,#41234d 57%,#613966 100%);box-shadow:inset 0 1px #ffffff43,0 27px 60px #40244e3d}
+.workbench-page .media-hero-copy{max-width:none}
+.workbench-page .media-hero h1{font-size:clamp(30px,3vw,44px);margin:22px 0 15px}
+.workbench-page .media-hero-actions button{box-shadow:inset 0 1px #ffffff45,0 8px 22px #1b102a55}
+.media-mascot-portal{position:absolute;right:22px;bottom:12px;z-index:3;width:237px;height:340px;padding:0;border:0;background:transparent;color:#fff;cursor:pointer}
+.media-mascot-portal::before{content:'';position:absolute;inset:35px 10px 49px;border-radius:50%;background:radial-gradient(circle at 37% 28%,#efcef08a,#b37cb287 55%,#58336544);border:1px solid #fff8;box-shadow:inset 0 14px 25px #ffffff27,0 20px 35px #160a2466}
+.media-mascot-portal img{position:absolute;left:17px;top:0;width:204px;height:279px;object-fit:contain;filter:drop-shadow(0 18px 15px #1a0b248b);animation:dingFloat 5s ease-in-out infinite;transition:transform .3s}
+.media-mascot-portal:hover img{transform:rotate(5deg) scale(1.045)}
+.media-mascot-portal span{position:absolute;left:0;right:0;bottom:0;display:grid;gap:4px;padding:12px 13px;border:1px solid #fff9;border-radius:14px;background:#f9eaf5eb;color:#4b3057;box-shadow:0 12px 25px #1b0b2880;backdrop-filter:blur(12px);text-align:center}
+.media-mascot-portal b{font-size:16px;letter-spacing:.02em}.media-mascot-portal small{font-size:10px;color:#83608d}
+.workbench-page button:focus-visible,.workbench-page a:focus-visible{outline:3px solid #d29ae1;outline-offset:3px}
+@keyframes dingFloat{0%,100%{translate:0 0}50%{translate:0 -8px}}
+@media(max-width:1180px){.workbench-page .hero-heading{padding:38px 37px;min-height:425px}.workbench-page .hero-heading>div:first-child{max-width:61%}.workbench-page .hero-heading h1{font-size:clamp(31px,3.1vw,43px)}.workbench-page .workbench-art-note{display:none}.mascot-speech{left:-9%;top:9%;min-width:155px}.workbench-page .media-hero{padding-right:222px}.media-mascot-portal{right:12px;width:195px;height:290px}.media-mascot-portal img{left:13px;width:170px;height:234px}.media-mascot-portal::before{inset:28px 6px 40px}}
+@media(max-width:700px){.workbench-page .topbar{padding:0 16px}.workbench-page .mascot-top-entry{width:38px;height:38px;flex:none}.workbench-page .hero-heading{min-height:610px;padding:30px 24px 220px;border-radius:22px}.workbench-page .hero-heading>div:first-child{max-width:100%}.workbench-page .hero-heading h1{font-size:clamp(30px,8vw,39px);margin:17px 0 13px}.workbench-page .hero-heading h1 em{display:inline}.workbench-page .hero-heading p{font-size:12px;line-height:1.7}.workbench-page .hero-art.workbench-hero-art{width:184px;height:197px;top:auto;right:15px;bottom:12px}.mascot-stage{inset:10px 6px 12px}.workbench-mascot-button img{width:151px;height:178px;top:0;right:15px}.mascot-speech{left:-138px;top:44px;min-width:153px;padding:10px 11px}.mascot-speech strong{font-size:12px}.mascot-speech em{font-size:9px}.workbench-page .workbench-art-note{display:none}.workbench-page .media-hero{min-height:565px;padding:29px 23px 194px;border-radius:22px}.workbench-page .media-hero h1{font-size:clamp(26px,7vw,32px)}.workbench-page .media-hero h1 em{display:block}.workbench-page .media-hero h1 br{display:none}.workbench-page .media-hero-copy p{font-size:11px}.media-mascot-portal{width:163px;height:178px;right:14px;bottom:10px}.media-mascot-portal img{width:135px;height:151px;left:14px;top:0}.media-mascot-portal::before{inset:14px 5px 12px}.media-mascot-portal span{padding:6px 8px;gap:0}.media-mascot-portal b{font-size:11px}.media-mascot-portal small{font-size:8px}.workbench-page .metric-card,.workbench-page .panel,.workbench-page .media-card{border-radius:15px}}
+@media(max-width:390px){.workbench-page .hero-heading{min-height:630px}.workbench-page .hero-actions{gap:7px}.workbench-page .hero-actions .button{white-space:normal;text-align:center}}
+@media(prefers-reduced-motion:reduce){.workbench-mascot-button img,.media-mascot-portal img{animation:none}}

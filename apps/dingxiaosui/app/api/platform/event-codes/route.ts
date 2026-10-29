@@ -1,0 +1,7 @@
+import {api,platform,input,json,ApiError,strictOrigin,field} from '@/lib/tenancy';
+import {centerRequired} from '@/lib/zlg-gateway';
+import {eventActivationEnabled,eventActivationOverview,issueEventCodes,revokeEventCodes,resolveUnknownEventCredit,selectEventBatch} from '@/lib/event-credits';
+export const dynamic='force-dynamic';
+function enabled(){if(!eventActivationEnabled()||centerRequired())throw new ApiError(409,'紫丁香独立体验卡尚未启用');}
+export function GET(request:Request){return api(request,async()=>{enabled();await platform();return json(await eventActivationOverview(field(new URL(request.url).searchParams.get('batchId')||'',80)));});}
+export function POST(request:Request){return api(request,async()=>{enabled();const user=await platform();strictOrigin(request);if(!request.headers.get('content-type')?.startsWith('application/json'))throw new ApiError(415,'请提交 JSON 格式');const body=await input(request,['action','requestId','label','count','redeemBefore','batchId','codeId','reason','holdId','outcome']);if(body.action==='issue')return json(await issueEventCodes(user.id,body as Parameters<typeof issueEventCodes>[1]));if(body.action==='select')return json(await selectEventBatch(user.id,body.batchId,body.reason));if(body.action==='revoke')return json(await revokeEventCodes(body,user.id));if(body.action==='resolve')return json(await resolveUnknownEventCredit(user.id,body as Parameters<typeof resolveUnknownEventCredit>[1]));throw new ApiError(400,'不支持这项操作');});}

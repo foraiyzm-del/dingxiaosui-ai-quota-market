@@ -1,0 +1,8 @@
+.studio-nav>div{flex-wrap:wrap}
+.studio-nav .ai-tutorial-entry,.workbench-page .top-actions .ai-tutorial-entry{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;flex-shrink:0;padding:8px 12px;border:1px solid #ded0e7;border-radius:9px;background:#f5eef9;color:#6f4a86;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;line-height:1.5}
+.ai-tutorial-entry>span{display:inline-grid;place-items:center;width:17px;height:17px;border:1px solid currentColor;border-radius:50%;font-size:12px;line-height:1}
+.ai-tutorial-entry:hover{background:#ede1f4!important;border-color:#ae8fc0!important}
+.ai-tutorial-entry:focus-visible{outline:3px solid #9b74b4;outline-offset:3px}
+.workbench-page .topbar .breadcrumbs{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.workbench-page .top-actions{flex-shrink:0}
+@media(max-width:680px){.workbench-page .top-actions .ai-tutorial-entry{display:inline-flex;padding:6px 9px;font-size:12px;min-height:36px}.workbench-page .topbar{gap:8px}.workbench-page .top-actions{gap:7px}.workbench-page .topbar .breadcrumbs{font-size:11px}.workbench-page .ai-tutorial-entry>span{display:none}.studio-nav>div{gap:16px}}

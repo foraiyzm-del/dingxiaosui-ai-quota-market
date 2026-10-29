@@ -1,0 +1,20 @@
+/* 首页 IP 与三晋风物主视觉融为一体，保留完整可点的对话入口。 */
+.hero.section-wrap{min-height:650px}
+.hero .hero-copy{width:62%;padding-bottom:148px}
+.hero-mascot{position:absolute;top:84px;right:6vw;z-index:3;display:block;width:min(34vw,390px);height:438px;aspect-ratio:auto;padding:0;border:0;border-radius:0;background:none;box-shadow:none;overflow:visible;color:#fff;text-align:left;transform:none;transition:transform .3s ease;isolation:isolate}
+.hero-mascot::before{content:'';position:absolute;z-index:-1;inset:10% 3% 6%;border-radius:50%;background:radial-gradient(circle at 51% 49%,#a77baca8 0%,#764f8871 32%,#3c244b20 65%,transparent 74%);filter:blur(15px);pointer-events:none}
+.hero-mascot::after{content:'';position:absolute;z-index:-1;left:18%;right:8%;bottom:5%;height:25px;border-radius:50%;background:#120b1ab8;filter:blur(16px);pointer-events:none}
+.hero-mascot img{position:absolute;inset:0 0 24px;width:100%;height:calc(100% - 24px);object-fit:contain;object-position:center bottom;filter:drop-shadow(0 20px 17px #1e0f25b8);animation:hero-ip-float 5s ease-in-out infinite;transition:transform .3s ease}
+.hero-mascot:hover,.hero-mascot:focus-visible{transform:none;box-shadow:none}
+.hero-mascot:hover img{transform:translateY(-5px) rotate(3deg)}
+.hero-mascot-copy{position:absolute;left:-12px;bottom:9px;right:auto;display:grid;gap:2px;padding:0 0 0 14px;border-left:2px solid #f7d9f5;background:none;box-shadow:none;color:#fff;text-shadow:0 2px 13px #100818,0 0 24px #100818;transform:rotate(-3deg)}
+.hero-mascot-copy small{font-size:9px;letter-spacing:.14em;color:#f7dff4;font-weight:800}
+.hero-mascot-copy b{font:700 21px/1.2 'Noto Serif SC',serif;color:#fff;white-space:nowrap}
+.hero-mascot-copy b span{font-family:Arial,sans-serif;font-size:14px;margin-left:3px;color:#f5c9ef}
+.hero-mascot-copy em{font-size:10px;color:#fceafa;font-style:normal}
+.hero-demo{right:5.5vw;bottom:86px;max-width:420px}
+@keyframes hero-ip-float{0%,100%{translate:0 0}50%{translate:0 -7px}}
+@media(max-width:1080px){.hero .hero-copy{width:64%}.hero-mascot{right:3vw;top:110px;width:min(32vw,350px);height:388px}.hero-mascot-copy{left:-5px}.hero-demo{right:2vw}}
+@media(max-width:700px){.hero.section-wrap{min-height:695px}.hero .hero-copy{width:100%;padding:45px 18px 0}.hero h1{font-size:clamp(35px,9vw,48px)}.hero-mascot{position:absolute;top:auto;right:13px;bottom:73px;margin:0;width:184px;height:236px;aspect-ratio:auto;opacity:1;transform:none}.hero-mascot::before{inset:8% 0 0;filter:blur(11px)}.hero-mascot::after{bottom:4%}.hero-mascot img{height:calc(100% - 17px);bottom:17px}.hero-mascot-copy{left:-3px;bottom:0;padding-left:8px;gap:1px;transform:none}.hero-mascot-copy small{font-size:7px;letter-spacing:.05em}.hero-mascot-copy b{font-size:18px}.hero-mascot-copy em{font-size:8px}.hero-demo{left:18px;right:auto;bottom:115px;width:calc(100% - 215px);max-width:175px;display:grid;justify-content:start;gap:5px;text-align:left}.hero-demo>span{text-align:left}.hero-demo b{font-size:8px;padding:4px 6px}.hero-bottom{height:52px}}
+@media(max-width:380px){.hero.section-wrap{min-height:710px}.hero-mascot{right:10px;width:172px;height:222px}.hero-demo{width:calc(100% - 192px);left:14px}}
+@media(prefers-reduced-motion:reduce){.hero-mascot img{animation:none}}

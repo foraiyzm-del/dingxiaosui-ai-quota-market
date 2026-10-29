@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawn} from 'node:child_process';
+const root=path.resolve(import.meta.dirname,'..');process.chdir(root);
+const hosting=JSON.parse(fs.readFileSync('.openai/hosting.json','utf8'));
+if(hosting.project_id||!fs.readFileSync('.dev.vars','utf8').includes('APP_ENV=local'))throw Error('Isolated local copy required');
+const config=JSON.parse(fs.readFileSync('dist/server/wrangler.json','utf8'));
+if(config.d1_databases?.some(x=>x.database_id!=='00000000-0000-4000-8000-000000000000'))throw Error('Unexpected database binding');
+config.services=[{binding:'AI_TEST_UPSTREAM',service:'zdx-ai-test-upstream'}];
+fs.mkdirSync('.local-test',{recursive:true});
+fs.writeFileSync('dist/server/wrangler.ai-test.json',JSON.stringify(config));
+fs.copyFileSync('.dev.vars','dist/server/.dev.vars');
+fs.writeFileSync('.local-test/upstream.json',JSON.stringify({name:'zdx-ai-test-upstream',main:'../scripts/ai-test-upstream.mjs',compatibility_date:'2026-05-15'}));
+const child=spawn(process.execPath,['--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','dev','--config','dist/server/wrangler.ai-test.json','--config','.local-test/upstream.json','--local','--persist-to','.wrangler/state','--ip','127.0.0.1','--port','8813','--inspector-port','0','--log-level','warn'],{stdio:'inherit',env:{...process.env,WRANGLER_SEND_METRICS:'false'}});
+child.on('error',error=>{console.error(error.message);process.exitCode=1});child.on('exit',code=>{process.exitCode=code??0});

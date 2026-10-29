@@ -1,0 +1,46 @@
+// Pure configuration validation: no storage, network, user accounts or issued codes.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import ts from 'typescript';
+const root=path.resolve(import.meta.dirname,'..');
+const moduleUrl=source=>'data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64');
+const protocolUrl=moduleUrl(fs.readFileSync(path.join(root,'lib/apimart-protocol.ts'),'utf8'));
+const planSource=fs.readFileSync(path.join(root,'lib/event-plans.ts'),'utf8').replace("'./apimart-protocol'",JSON.stringify(protocolUrl));
+const {launchEventPlan:plan,eventServiceProfiles:profiles,validateEventPlan,eventGrant,eventExpiry,eventPreparationSummary,eventVideoUnits}=await import(moduleUrl(planSource));
+validateEventPlan(plan);
+assert.equal(plan.cardCount,50);
+assert.equal(eventGrant('image.generate.standard').units,5);
+assert.equal(eventGrant('text.generate.standard').units,10);
+assert.equal(eventGrant('video.generate.standard').units,2);
+assert.equal(profiles.standard.video.duration,15);
+const legacy=structuredClone(plan);legacy.id='zdx-launch-50-v1';legacy.grants=legacy.grants.filter(row=>row.unit!=='video');validateEventPlan(legacy);assert.equal(eventVideoUnits(legacy),2);
+const unsupported=structuredClone(legacy);unsupported.id='unsupported-old-plan';assert.throws(()=>validateEventPlan(unsupported));
+assert.equal(profiles.standard.image.model,'gpt-image-2.5-flare');
+assert.equal(profiles.standard.image.resolution,'2k');
+assert.equal(profiles.standard.image.quality,'medium');
+assert.equal(profiles.standard.text.model,'deepseek-v4.1-flash');
+assert.equal(profiles.premium.image.quality,'high');
+assert.equal(profiles.premium.text.model,null);
+assert.equal(profiles.premium.text.candidateModel,'deepseek-v4-pro');
+assert.equal(profiles.premium.paidEnabled,false);
+assert.equal(profiles.premium.price,null);
+assert.throws(()=>eventGrant('image.generate.premium'),/不包含/);
+assert.throws(()=>eventGrant('text.generate.premium'),/不包含/);
+assert.throws(()=>eventGrant('report.generate'),/不包含/);
+assert.equal(eventExpiry('2026-11-02T10:30:00+08:00'),'2026-11-09T02:30:00.000Z');
+assert.equal(eventExpiry('2026-11-05T10:30:00+08:00'),'2026-11-12T02:30:00.000Z');
+assert.throws(()=>eventExpiry('2026-11-02'),/时区/);
+assert.throws(()=>eventExpiry('not-a-date'),/时区/);
+const summary=eventPreparationSummary();
+assert.equal(summary.totalImageUnits,250);
+assert.equal(summary.totalTextUnits,500);assert.equal(summary.totalVideoUnits,100);
+assert.equal(summary.status,'prepared_not_issued');
+assert.equal(summary.issued,false);
+assert(!Object.hasOwn(summary,'codes'));
+for(const mutate of [p=>{p.administrativeIssuanceOnly=false},p=>{p.cardCount=0},p=>{p.validityDays=-1},p=>{p.grants[0].units=1.5},p=>{p.grants[0].serviceProfileId='premium'},p=>{p.grants[0].capabilityId='image.generate.premium'},p=>{p.grants[0].unit='text'},p=>{p.grants[1]={...p.grants[0]}},p=>{p.grants.push({...p.grants[0]})},p=>{p.price=1}]){
+ const changed=structuredClone(plan);mutate(changed);assert.throws(()=>validateEventPlan(changed));
+}
+assert.throws(()=>{plan.grants[0].units=99},TypeError);
+assert.throws(()=>{profiles.premium.paidEnabled=true},TypeError);
+console.log('PASS: 50 preparation cards, 5 standard images + 10 standard texts + 2 videos at 15 seconds per card, old v1 snapshots compatible, redemption-relative 7-day expiry, isolated capability quotas and disabled/unpriced premium profile. No codes issued or database opened.');

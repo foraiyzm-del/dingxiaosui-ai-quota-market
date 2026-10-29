@@ -1,0 +1,86 @@
+{
+  "version": "2026-10-23",
+  "promotionMonthlyLimit": 500,
+  "plans": [
+    {
+      "id": "light-20",
+      "name": "轻量体验包",
+      "kind": "paid",
+      "group": "paid",
+      "credits": 20,
+      "amountMinor": 2900,
+      "description": "先从一款农品、几份好内容开始。",
+      "recommended": false
+    },
+    {
+      "id": "daily-80",
+      "name": "日常经营包",
+      "kind": "paid",
+      "group": "paid",
+      "credits": 80,
+      "amountMinor": 9900,
+      "description": "适合持续做内容的农品经营者。",
+      "recommended": true
+    },
+    {
+      "id": "growth-250",
+      "name": "持续创作包",
+      "kind": "paid",
+      "group": "paid",
+      "credits": 250,
+      "amountMinor": 29900,
+      "description": "为更多农品与持续创作留出空间。",
+      "recommended": false
+    },
+    {
+      "id": "trial-5",
+      "name": "新客户体验",
+      "kind": "gift",
+      "group": "experience",
+      "credits": 5,
+      "amountMinor": 0,
+      "description": "登录工作台自动领取 5 点，每账号一次；受当月体验名额限制。",
+      "recommended": false
+    },
+    {
+      "id": "event-10",
+      "name": "培训与沙龙体验",
+      "kind": "gift",
+      "group": "experience",
+      "credits": 10,
+      "amountMinor": 0,
+      "description": "活动名单核实后额外发码，同账号活动与合作体验限兑一种。",
+      "recommended": false
+    },
+    {
+      "id": "partner-20",
+      "name": "合作商家体验",
+      "kind": "gift",
+      "group": "experience",
+      "credits": 20,
+      "amountMinor": 0,
+      "description": "定向邀请商家，核实后额外发码，同账号活动与合作体验限兑一种。",
+      "recommended": false
+    },
+    {
+      "id": "referrer-10",
+      "name": "推荐人奖励",
+      "kind": "gift",
+      "group": "reward",
+      "credits": 10,
+      "amountMinor": 0,
+      "description": "首笔实付订单及退款情况人工核对后发放；不与渠道佣金叠加。",
+      "recommended": false
+    },
+    {
+      "id": "referred-5",
+      "name": "受邀新客户奖励",
+      "kind": "gift",
+      "group": "reward",
+      "credits": 5,
+      "amountMinor": 0,
+      "description": "通过推荐完成首笔实付订单，人工核对后发放。",
+      "recommended": false
+    }
+  ]
+}

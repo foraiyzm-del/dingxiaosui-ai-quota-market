@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawn} from 'node:child_process';
+const root=path.resolve(import.meta.dirname,'..');process.chdir(root);
+const hosting=JSON.parse(fs.readFileSync('.openai/hosting.json','utf8'));
+if(hosting.project_id || !fs.readFileSync('.dev.vars','utf8').includes('APP_ENV=local'))throw Error('Only an isolated local test copy can run this command');
+const config=JSON.parse(fs.readFileSync('dist/server/wrangler.json','utf8'));
+if(config.d1_databases?.some(x=>x.database_id!=='00000000-0000-4000-8000-000000000000'))throw Error('Unexpected database binding');
+fs.copyFileSync('.dev.vars','dist/server/.dev.vars');
+const child=spawn(process.execPath,['--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','dev','--config','dist/server/wrangler.json','--local','--persist-to','.wrangler/state','--ip','127.0.0.1','--port','8807','--inspector-port','0'],{stdio:'inherit',env:{...process.env,WRANGLER_SEND_METRICS:'false'}});
+child.on('error',error=>{console.error(error.message);process.exitCode=1});child.on('exit',code=>{process.exitCode=code??0});

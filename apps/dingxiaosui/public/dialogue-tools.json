@@ -1,0 +1,250 @@
+[
+  {
+    "id": "minutes",
+    "name": "会议纪要",
+    "group": "办公",
+    "description": "讨论变结论，任务带负责人和时间",
+    "placeholder": "粘贴会议记录，或说说这次农品合作讨论了什么。",
+    "source": "github-meeting"
+  },
+  {
+    "id": "ppt",
+    "name": "PPT 大纲",
+    "group": "办公",
+    "description": "农品品牌介绍、招商与汇报的逐页大纲",
+    "placeholder": "品牌或农产品叫什么？",
+    "source": "baoyu-slides"
+  },
+  {
+    "id": "weekly",
+    "name": "周报与总结",
+    "group": "办公",
+    "description": "讲清完成事项、问题与下一步",
+    "placeholder": "说说这周做了哪些农品经营工作，有什么结果。",
+    "source": "original"
+  },
+  {
+    "id": "email",
+    "name": "商务邮件",
+    "group": "办公",
+    "description": "邀约、跟进、通知，一封说清楚",
+    "placeholder": "给谁写信？说说农产品和要沟通的事。",
+    "source": "original"
+  },
+  {
+    "id": "translate",
+    "name": "专业翻译",
+    "group": "办公",
+    "description": "中英互译，保留术语和数字",
+    "placeholder": "粘贴需要翻译的内容，也可说明目标语言。",
+    "source": "baoyu-translate"
+  },
+  {
+    "id": "polish",
+    "name": "文字润色",
+    "group": "办公",
+    "description": "表达更顺，事实不变",
+    "placeholder": "粘贴想润色的内容，告诉我想改哪里。",
+    "source": "baoyu-format"
+  },
+  {
+    "id": "sop",
+    "name": "岗位 SOP",
+    "group": "办公",
+    "description": "把重复工作变成步骤清单",
+    "placeholder": "哪项农品经营工作需要整理成操作步骤？",
+    "source": "original"
+  },
+  {
+    "id": "excel",
+    "name": "Excel 公式助手",
+    "group": "办公",
+    "description": "给公式，也给可核对的小样例",
+    "placeholder": "描述数据列和想计算什么，也可粘贴一份小样。",
+    "source": "original"
+  },
+  {
+    "id": "plan",
+    "name": "活动方案",
+    "group": "办公",
+    "description": "目标、流程、分工与物料一次梳理",
+    "placeholder": "想办一场什么农品活动？也可补充时间、地点和对象。",
+    "source": "original"
+  },
+  {
+    "id": "selling",
+    "name": "产品卖点",
+    "group": "营销",
+    "description": "把产品介绍变成客户关心的价值",
+    "placeholder": "请输入农产品名称，可补充已确认的特点。",
+    "source": "original"
+  },
+  {
+    "id": "moments",
+    "name": "朋友圈文案",
+    "group": "营销",
+    "description": "有内容、有温度的三种表达",
+    "placeholder": "想给哪个品牌或农产品写朋友圈？",
+    "source": "original"
+  },
+  {
+    "id": "xiaohongshu",
+    "name": "小红书笔记",
+    "group": "营销",
+    "description": "标题、正文和关键词一起给",
+    "placeholder": "想介绍哪个品牌或农产品？",
+    "source": "original"
+  },
+  {
+    "id": "script",
+    "name": "短视频脚本",
+    "group": "营销",
+    "description": "选题、口播、分镜和行动建议",
+    "placeholder": "想拍哪个品牌或农产品？",
+    "source": "original"
+  },
+  {
+    "id": "article",
+    "name": "公众号文章",
+    "group": "营销",
+    "description": "观点清楚，结构完整",
+    "placeholder": "想介绍哪款农产品或品牌？也可粘贴已有资料。",
+    "source": "original"
+  },
+  {
+    "id": "campaign",
+    "name": "营销活动策划",
+    "group": "营销",
+    "description": "从目标到渠道，再到复盘",
+    "placeholder": "想为哪款农产品做活动？说说目标和已有条件。",
+    "source": "original"
+  },
+  {
+    "id": "sales",
+    "name": "销售跟进话术",
+    "group": "营销",
+    "description": "围绕客户疑问继续沟通",
+    "placeholder": "客户问了什么？可补充相关农产品信息。",
+    "source": "original"
+  },
+  {
+    "id": "brief",
+    "name": "商业计划梳理",
+    "group": "创业",
+    "description": "把想法变成可以验证的计划",
+    "placeholder": "说说你的农品生意想法和现有资源。",
+    "source": "original"
+  },
+  {
+    "id": "knowledge",
+    "name": "知识库整理",
+    "group": "办公",
+    "description": "分类、命名、更新责任一起规划",
+    "placeholder": "有哪些农品资料需要整理？可先粘贴一部分。",
+    "source": "original"
+  },
+  {
+    "id": "general",
+    "name": "自动判断",
+    "group": "对话",
+    "description": "直接说品牌名字或需求，丁小穗帮你选场景",
+    "placeholder": "品牌叫什么？或者说说你想做什么。",
+    "source": "original"
+  },
+  {
+    "id": "agri",
+    "name": "农产品营销",
+    "group": "农品",
+    "description": "产地、卖点、客群与渠道推广文案",
+    "placeholder": "品牌或农产品叫什么？",
+    "source": "original"
+  },
+  {
+    "id": "design",
+    "name": "营销设计方案",
+    "group": "营销",
+    "description": "活动主题、海报文案与视觉版式建议",
+    "placeholder": "想推广哪个品牌或农产品？",
+    "source": "original"
+  },
+  {
+    "id": "brand",
+    "name": "品牌营销",
+    "group": "品牌",
+    "description": "品牌定位、品牌故事与传播主张",
+    "placeholder": "你的品牌叫什么？",
+    "source": "original"
+  },
+  {
+    "id": "agri-model",
+    "name": "农业模特",
+    "group": "品牌",
+    "description": "人物设定、持品场景与农品展示方案",
+    "placeholder": "想展示哪个品牌或农产品？",
+    "source": "original"
+  },
+  {
+    "id": "new-farmer",
+    "name": "AI 新农人",
+    "group": "品牌",
+    "description": "新农人 IP、账号定位与日常内容",
+    "placeholder": "说说你是谁，或想做什么账号。",
+    "source": "original"
+  },
+  {
+    "id": "live",
+    "name": "直播带货",
+    "group": "营销",
+    "description": "开场、产品讲解与现场答疑",
+    "placeholder": "准备直播卖什么农产品？",
+    "source": "original"
+  },
+  {
+    "id": "detail",
+    "name": "电商详情页",
+    "group": "营销",
+    "description": "首屏、卖点、规格与购买答疑",
+    "placeholder": "想介绍哪个品牌或农产品？",
+    "source": "original"
+  },
+  {
+    "id": "private",
+    "name": "私域团购",
+    "group": "营销",
+    "description": "社群预热、团购接龙与复购沟通",
+    "placeholder": "准备团购什么农产品？",
+    "source": "original"
+  },
+  {
+    "id": "season",
+    "name": "节气上新",
+    "group": "营销",
+    "description": "农时、上市信息与应季内容",
+    "placeholder": "哪款农产品要上新？",
+    "source": "original"
+  },
+  {
+    "id": "gift",
+    "name": "节日礼盒",
+    "group": "营销",
+    "description": "礼赠主题、组合介绍与采购表达",
+    "placeholder": "想给哪个品牌做礼盒？",
+    "source": "original"
+  },
+  {
+    "id": "channel",
+    "name": "招商与渠道",
+    "group": "营销",
+    "description": "合作介绍、供货条件与洽谈话术",
+    "placeholder": "想推广哪个品牌或农产品？",
+    "source": "original"
+  },
+  {
+    "id": "visit",
+    "name": "采摘与农旅",
+    "group": "营销",
+    "description": "采摘活动、农场体验与行程介绍",
+    "placeholder": "你的农场或果园叫什么？",
+    "source": "original"
+  }
+]

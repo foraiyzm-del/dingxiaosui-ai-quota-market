@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><link rel="stylesheet" href="/event-access.css?v=direct-1"><script src="/event-access.js?v=direct-1" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script>
+    (() => {
+      if (new URLSearchParams(location.search).get('desktop') === '1') return;
+      const phone = matchMedia('(max-width: 700px)').matches || navigator.userAgentData?.mobile === true || /iPhone|iPod|Android.+Mobile|Windows Phone/i.test(navigator.userAgent);
+      if (!phone) return;
+      const anchors = { '#top':'top', '#salon':'salon', '#calendar':'calendar', '#cases':'cases', '#map':'atlas', '#news':'news', '#opc':'join' };
+      const section = anchors[location.hash];
+      location.replace(`/h5.html${section ? `#${section}` : ''}`);
+    })();
+  </script>
+  <meta name="theme-color" content="#21172b">
+  <meta name="description" content="山西农业大学智能传播研究院发起的紫丁香传播行动，探索山西农产品 OPC 共创。了解行动纪实，体验选品建档、内容营销与主理人工作台。">
+  <title>紫丁香计划 · 让山西好物走进更多人的生活</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="landing.css">
+  <link rel="stylesheet" href="city-lab.css">
+  <link rel="stylesheet" href="zidingxiang.css">
+  <link rel="stylesheet" href="premium.css">
+  <link rel="stylesheet" href="landing-plus.css">
+  <link rel="stylesheet" href="report-progress.css">
+  <link rel="stylesheet" href="storefront.css">
+  <link rel="stylesheet" href="packaging-v2.css">
+  <link rel="stylesheet" href="growth-ip.css">
+  <link rel="stylesheet" href="impact-refresh.css">
+  <link rel="stylesheet" href="ding-chat.css">
+  <link rel="stylesheet" href="ai-pilot.css?v=26">
+  <link rel="stylesheet" href="landing-compact.css?v=23">
+  <link rel="stylesheet" href="hero-ip-integrated.css?v=20">
+  <link rel="stylesheet" href="ip-360-entry.css?v=23">
+  <link rel="stylesheet" href="ding-play.css?v=24">
+  <script src="workspace-sync.js?v=1" defer></script><script src="workspace-storage.js?v=29" defer></script>
+  <script type="application/zdx-script" data-zdx-src="shanxi-map-data.js"></script>
+  <script type="application/zdx-script" data-zdx-src="landing.js"></script>
+  <script type="application/zdx-script" data-zdx-src="landing-plus.js"></script>
+  <script type="application/zdx-script" data-zdx-src="storefront.js"></script>
+  <script type="application/zdx-script" data-zdx-src="packaging-v2.js"></script>
+  <script type="application/zdx-script" data-zdx-src="growth-ip.js?v=23"></script>
+  <script type="application/zdx-script" data-zdx-src="ai-pilot.js?v=26"></script>
+  <script type="application/zdx-script" data-zdx-src="ding-chat.js?v=26"></script>
+  <script type="application/zdx-script" data-zdx-src="ding-play.js?v=24"></script>
+  <script type="application/zdx-script" data-zdx-src="content-sync.js"></script>
+  <script type="application/zdx-script" data-zdx-src="landing-compact.js?v=23"></script>
+</head>
+<body>
+  <div class="site-grain" aria-hidden="true"></div>
+  <header class="site-header premium-header">
+    <div class="header-top">
+      <a class="institute-lockup" href="#top" aria-label="山西农业大学智能传播研究院发起的紫丁香计划 首页"><span class="institute-logo-frame"><img src="institute-logo.jpg" width="796" height="342" alt="山西农业大学智能传播研究院"></span><span class="lockup-rule"></span><span class="plan-wordmark"><small>山西农业大学智能传播研究院发起</small><b>紫丁香计划<span>✦</span></b><small>让智能传播点亮乡村之光</small></span></a>
+      <div class="header-actions"><a class="signin" href="workbench.html">主理人工作台 <span>↗</span></a><button class="join-button" data-join type="button">加入 OPC 计划 <span>↗</span></button></div>
+    </div>
+    <nav class="site-nav" aria-label="页面导航"><a href="#salon">紫丁香会客厅</a><a href="#calendar">营销日历</a><a href="#cases">晋品线索</a><a href="#map">三晋风物</a><a href="#news">行动纪实</a><a href="#opc">OPC 计划</a><a href="community.html">AI 新农人学院</a><a href="workbench.html?view=agent">经营智能体</a><span>SHANXI · CHINA / 2026</span></nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section-wrap" aria-labelledby="hero-title">
+      <div class="hero-visual" aria-hidden="true"></div>
+      <div class="hero-copy"><div class="overline"><span class="red-line"></span> 山西农业大学智能传播研究院发起 · 紫丁香计划</div><div class="hero-ambition">从山西出发 · 让特优农品走向全国与世界</div><h1 id="hero-title">让<span class="serif-accent">山西好物</span><br>被更多人看见<span class="period">。</span></h1><p>以 AI 放大创造力，以短视频打开市场，让山西好农品走向全国与世界。</p><div class="hero-cta"><a class="cta-main" href="workbench.html?view=agent">体验经营智能体 <span>↗</span></a><button class="cta-text" data-join type="button">加入 OPC 计划 <span>↗</span></button></div><div class="hero-proof"><span class="proof-line"></span><span>一款真实农品 · 一套可持续使用的内容与经营工具</span></div></div>
+      <button class="hero-mascot" type="button" data-ding-play aria-label="逗丁小穗玩，连续点击可眨眼、挥手、敲屏和变身"><img src="ding-xiaosui-fluffy.webp" alt="毛茸茸的紫丁香农品向导丁小穗"><span class="hero-mascot-copy"><small>紫丁香计划 · 农品向导</small><b>丁小穗 <span aria-hidden="true">✦</span></b><em>点我试试 · 四次变身</em></span></button>
+      <div class="hero-demo" aria-label="工作台能力预览"><span>一份农品资料，可以用在</span><b>朋友圈</b><b>小红书</b><b>视频号</b><b>包装文案</b></div>
+      <div class="hero-side-note" aria-hidden="true"><span>紫丁香计划</span><i></i><span>FROM SHANXI, FOR EVERYWHERE</span></div>
+      <div class="hero-bottom"><span>01 / 真实产地</span><span>02 / 智能传播</span><span>03 / OPC 共创</span><a href="#salon">向下探索 <b>↓</b></a></div>
+    </section>
+
+    <section class="enterprise-loop section-wrap" aria-labelledby="enterprise-loop-title">
+      <div class="enterprise-loop-intro"><span>FOR AGRI-BUSINESS / 从资料到经营</span><h2 id="enterprise-loop-title">企业带来一款真实农品，<br><em>紫丁香帮你跑通五步。</em></h2><p>不是只写一篇文案，而是把产品事实、内容初稿、渠道发布、客户咨询和经营复盘连起来。每一步都保留人工核验与真实数据入口。</p><a href="workbench.html?view=products">带一款农品进入工作台 ↗</a></div>
+      <div class="enterprise-loop-steps" aria-label="紫丁香农品经营闭环">
+        <article><span>01</span><div><b>产品资料</b><small>产地 · 规格 · 供货主体 · 已确认卖点</small></div></article>
+        <article><span>02</span><div><b>AI 内容</b><small>按真实资料生成可编辑初稿，发布前人工核验</small></div></article>
+        <article><span>03</span><div><b>渠道传播</b><small>朋友圈 · 小红书 · 视频号 · 线下物料</small></div></article>
+        <article><span>04</span><div><b>咨询承接</b><small>用 OPC 小店展示农品，手动记录客户原话</small></div></article>
+        <article><span>05</span><div><b>经营复盘</b><small>登记发布、浏览、咨询与销售，再决定下一步</small></div></article>
+      </div>
+    </section>
+
+    <section id="news" class="news-section section-wrap" aria-labelledby="news-title">
+      <div class="section-top"><div><div class="section-overline">THE LILAC STORY / 行动纪实</div><h2 id="news-title">紫丁香，<br><em>从行动走向共创。</em></h2></div><p>沿着已经发生的活动与报道，了解紫丁香传播行动。下方为原文入口，内容和数据以各发布方的报道为准。</p></div>
+      <div class="news-lead"><div class="news-logo-card"><img src="institute-logo.jpg" width="728" height="342" alt="山西农业大学智能传播研究院标识"></div><div><span class="news-kicker">山西农业大学智能传播研究院 发起</span><h3>让智能传播点亮乡村之光</h3><p>“紫丁香传播行动”聚焦山西特优农产品传播、AI 新农人培育与产业服务。现在把 OPC 入驻体验、农品档案和内容工作台接到这条行动线上，形成可演示的数字化入口。</p><a href="https://www.ncpjg.com/nd.jsp?_ngc=-1&amp;fromColId=-1&amp;id=129" target="_blank" rel="noopener noreferrer">查看行动启动报道 ↗</a></div></div>
+      <div class="news-grid">
+        <article class="news-card"><span>2025.11.16 / 行动启动</span><h3>“紫丁香传播行动”正式启动</h3><p>人工智能与科学传播论坛期间，研究院揭牌，AI 赋能山西特优农业“紫丁香传播行动”启动。</p><a href="https://www.ncpjg.com/nd.jsp?_ngc=-1&amp;fromColId=-1&amp;id=129" target="_blank" rel="noopener noreferrer">阅读《农产品加工》报道 ↗</a></article>
+        <article class="news-card"><span>2026.09.22 / 阶段进展</span><h3>AI 新农人与产业一线</h3><p>报道记录了培训、长治电商产业基地交流，以及红枣、沙棘等企业走访与传播探索。</p><a href="https://www.zhshbao.com/newsDetail/228/230/288503" target="_blank" rel="noopener noreferrer">阅读《智慧生活报》报道 ↗</a></article>
+        <article class="news-card"><span>2026.09.22 / 丰收交流会</span><h3>AI 赋能紫丁香，电商助农庆丰收</h3><p>山西特优农业“紫丁香传播行动”暨今日农业丰收交流会，呈现专家分享、AI 工具发布和电商助农实践。</p><a href="https://www.zhshbao.com/newsDetail/228/230/288773" target="_blank" rel="noopener noreferrer">阅读活动报道 ↗</a></article>
+        <article class="news-card reader-record"><span>2026.09.22 / 今日农业原文</span><h3>AI 赋能紫丁香，电商助农庆丰收</h3><p>项目方提供的微信原文记录了太原交流会、紫丁香会客厅揭牌、AI 新农人代表及电商助农季活动。</p><a href="https://mp.weixin.qq.com/s/6vJ72KI7DIa8_NyuzpDmgA" target="_blank" rel="noopener noreferrer">阅读《今日农业》原文 ↗</a></article>
+      </div>
+      <div class="report-progress" aria-labelledby="report-progress-title">
+        <div class="report-progress-head"><div><span>FIELD REPORT / 2026.09</span><h3 id="report-progress-title">把行动写在三晋大地上。</h3><p>从 AI 新农人培育，到电商、农文旅与企业服务，紫丁香传播行动正把智能传播带进真实产业场景。</p></div><div class="report-progress-stamp">紫丁香开<br><b>沃土生辉</b></div></div>
+        <div class="report-numbers" aria-label="实施情况汇报摘要"><div><strong>4<small>期</small></strong><span>AI 新农人实战培训</span></div><div><strong>200<small>+</small></strong><span>累计参训人次</span></div><div><strong>10<small>+</small></strong><span>覆盖县市区</span></div></div>
+        <div class="report-tracks"><article><span>01 / TALENT</span><h4>培育 AI 新农人</h4><p>联合 AI 智链谷开展沉浸式实战培训，围绕图文创作、包装焕新、短视频营销等场景，让学员从自己的农品问题出发练习。</p></article><article><span>02 / COMMERCE</span><h4>共建电商新样板</h4><p>2026 年 8 月，专家走进长治市太行电商产业基地，围绕人才培育、农品遴选、品牌塑造和市场主体孵化开展交流。</p></article><article><span>03 / RURAL TOURISM</span><h4>探索农文旅融合</h4><p>2026 年 9 月，专家与媒体赴丈河调研乡村业态、森林康养与健康科普，为农文旅融合提炼实践经验。</p></article><article><span>04 / BRAND SERVICE</span><h4>走进特优企业</h4><p>围绕红枣、沙棘、果品加工等产业，与企业交流品牌升级、内容传播和数字化转型方向；具体合作成果以各方后续披露为准。</p></article></div>
+        <p class="report-source">数据与行动节点摘自山西农业大学智能传播研究院提供的《紫丁香传播行动实施情况汇报》（2026 年 9 月 22 日）。培训人数为该汇报口径；企业交流与专家建议不等于已完成商业合作或产生经营成效。</p>
+      </div>
+    </section>
+
+    <section id="map" class="map-section section-wrap"><div class="section-top"><div><div class="section-overline">01 / SHANXI PRODUCE ATLAS</div><h2>沿着三晋山川，<br><em>寻找一味好物。</em></h2></div><p>11 市可点选的风物地图：看代表农品、产地和风味表达，再把一个真实商品带进工作台。</p></div><div class="map-workspace"><div class="map-canvas"><div class="map-canvas-top"><span class="live-pill"><i></i> 山西风物图鉴 · 11 市</span><span class="map-coordinates">SHANXI / 37° N · EDITORIAL ATLAS</span></div><div class="map-stage"><div id="map-visual" class="map-visual" aria-label="山西 11 市互动地图"></div><div class="map-watermark" aria-hidden="true">三晋<br>风物</div></div><div class="map-city-rail" id="map-city-rail" aria-label="城市快速选择"></div><div class="map-bottom"><span>点选城市，读懂一方风物</span><span>11 PREFECTURES · 1 SHANXI</span></div></div><aside class="region-panel" id="region-panel" aria-live="polite"></aside></div><div class="map-footnote">城市边界为公开数据简化视觉呈现，仅作内容导航；代表农品和口味为公开线索或品类感官描述，具体商品须核对产地、标签、批次及授权。<a href="https://geo.datav.aliyun.com/areas_v3/bound/140000_full.json" target="_blank" rel="noopener">边界数据来源 ↗</a></div></section>
+
+    <section class="city-lab section-wrap" id="city-lab"><div class="city-lab-heading"><span class="section-overline">ANY CITY / ONE PLAYBOOK</span><h2>你的城市，<em>怎么讲好山西农品？</em></h2><p>选择城市、品类与场景，得到三步起步建议，再用真实商品和客户访谈验证。</p></div><form id="city-form" class="city-form"><label>山西城市<select name="city" id="city-province"></select></label><label>主理人所在城市<input name="market" maxlength="30" required placeholder="例如：太原、北京"></label><label>农品品类<select name="product"><option>杂粮 / 小米</option><option>果品</option><option>干果</option><option>蔬菜</option><option>肉制品</option><option>醋及调味品</option><option>其他农品</option></select></label><label>主打场景<select name="scene"><option>家庭餐桌</option><option>节日伴手礼</option><option>产地故事</option><option>企业团购</option><option>社区团购</option><option>日常种草</option></select></label><button type="submit">生成城市打法 ↗</button></form><div id="city-result" class="city-result" aria-live="polite"><div class="city-result-empty">选择城市、品类和场景，即可生成 3 步行动方案。</div></div></section>
+
+    <section id="pain" class="pain-section section-wrap"><div class="section-top tight"><div><div class="section-overline">02 / THE REAL PROBLEM</div><h2>好东西走出去，<br><em>需要一套方法。</em></h2></div><p>让生产端有可核实的商品资料，让 OPC 有可执行的推广工具，让咨询和反馈回到一处。</p></div><div class="pain-grid"><article><span>01 / PRODUCT</span><b>产地与规格说不清</b><p>产地、品类、口感、价格信息散落各处，销售时只能重复通用话术。</p><i>紫丁香计划解法：统一农品档案</i></article><article><span>02 / SCENE</span><b>一个文案，发给所有人</b><p>家庭餐桌、伴手礼、团购与产地故事，需要不同的内容角度。</p><i>紫丁香计划解法：按地区与场景生成初稿</i></article><article><span>03 / RHYTHM</span><b>节日到了才想起要做活动</b><p>预热、邀约、成交承接没有提前排期，忙完一波后也难复盘。</p><i>紫丁香计划解法：营销日历与活动模板</i></article><article><span>04 / PEOPLE</span><b>个人想推广，却缺一套工具</b><p>没有品牌部、设计师或完整店铺，一个人也需要能直接上手的经营入口。</p><i>紫丁香计划解法：OPC 个人农品小店与内容台</i></article></div></section>
+
+    <section id="cases" class="cases-section section-wrap"><div class="section-top tight"><div><div class="section-overline">03 / PUBLIC PLAYBOOKS</div><h2>从公开线索，<br><em>找到可验证的选品。</em></h2></div><p>以下是山西省农业农村厅公开报道中的产品线索。右侧建议为经营假设，不代表品牌授权、可供货或商业合作。</p></div><div id="case-grid" class="case-grid"></div></section>
+
+    <section id="calendar" class="calendar-section section-wrap"><div class="section-top tight"><div><div class="section-overline">04 / THE SEASONS OF SHANXI</div><h2>四时有信，<br><em>好物有期。</em></h2></div><p>沿着月份安排选品、内容与客户沟通。这里是经营灵感，采收、库存、运费和活动日期仍以具体商品资料为准。</p></div><div class="calendar-shell"><div class="calendar-art"><span class="calendar-art-kicker">ZIDINGXIANG · SEASONAL EDITION</span><div class="calendar-art-mark">四<br>时</div><div class="calendar-art-bottom"><b id="calendar-season-name">秋 · 收</b><span>从一月到十二月<br>在时间里讲好山西风物</span></div></div><div class="calendar-main"><div class="calendar-main-top"><span>THE 12-MONTH PLAYBOOK</span><span>挑一个月份，开始一件具体的事 ↘</span></div><div class="month-rail" id="month-rail" aria-label="月份选择"></div><div class="calendar-detail" id="calendar-detail"></div></div></div></section>
+
+    <section id="opc" class="opc-section section-wrap"><div class="opc-backdrop"></div><div class="opc-intro"><div class="section-overline">06 / ZIDINGXIANG OPC PROGRAM</div><h2>从一款山西好物，<br><em>开始你的 OPC。</em></h2><p>先跑通一条小链路：认识产地、核实商品、做内容、展示个人小店、记录咨询。供货、交易与履约将在合作方确认后再接入。</p><button class="cta-main" data-join type="button">加入 OPC 计划 <span>↗</span></button></div><div class="opc-steps"><div><span>01</span><b>加入计划</b><small>选择你的城市与经营阶段</small></div><div><span>02</span><b>选品建档</b><small>录入真实农品与可使用素材</small></div><div><span>03</span><b>启动营销</b><small>用地图、日历与案例做内容</small></div><div><span>04</span><b>承接意向</b><small>展示个人农品小店与咨询入口</small></div></div></section>
+
+    <section class="tiers-section section-wrap"><div class="section-top tight"><div><div class="section-overline">CHOOSE YOUR PATH</div><h2>选一个起点，<br><em>开始你的 OPC 计划。</em></h2></div><p>以下是体验阶段的路径划分，不含收费、佣金或供货承诺。</p></div><div class="tier-grid"><article><div class="tier-num">01 / EXPLORE</div><h3>启航 OPC</h3><p>适合刚开始探索山西农产品推广的人。</p><ul><li>地区营销灵感地图</li><li>农品与内容工作台</li><li>个人农品小店演示</li></ul><button data-join="启航 OPC" type="button">从这里加入 ↗</button></article><article class="featured"><div class="tier-num">02 / GROW</div><span class="tier-badge">推荐起点</span><h3>进阶 OPC</h3><p>适合已经有农品与本地客户场景的人。</p><ul><li>营销日历与品牌案例拆解</li><li>多渠道推广素材</li><li>咨询线索记录</li></ul><button data-join="进阶 OPC" type="button">加入进阶计划 ↗</button></article><article><div class="tier-num">03 / PARTNER</div><h3>伙伴 OPC</h3><p>适合准备与供货方协作的经营者。</p><ul><li>整理可用农品与经营资料</li><li>设计本地营销行动</li><li>后续对接供货与履约</li></ul><button data-join="伙伴 OPC" type="button">申请伙伴计划 ↗</button></article></div><p class="tier-note">当前为本地产品演示。访客入驻档案仅保存在本浏览器；登录后账号档案保存到服务器。支付、订单及供货尚未开通。</p></section>
+  </main>
+  <footer class="site-footer"><div class="footer-brand"><span class="logo-emblem">紫<i></i></span><div><b>紫丁香计划</b><small>山西农业大学智能传播研究院发起 · 山西农产品 OPC 工作台原型</small></div></div><div><a href="#news">行动纪实</a><a href="#map">山西农产品地图</a><a href="#cases">晋品线索</a><a href="community.html">AI 新农人学院</a><a href="workbench.html">工作台</a></div><p>公开活动记录与产区线索均附来源。真实商品信息、资质、图片授权及交易条件须由经营方核实。</p></footer>
+
+  <dialog id="join-dialog" class="join-dialog"><form id="join-form" class="join-form"><div class="dialog-top"><span class="section-overline">START YOUR OPC JOURNEY</span><button type="button" id="join-close" aria-label="关闭">×</button></div><h2>加入紫丁香 OPC 计划</h2><p>先建立一张本地体验档案，进入你的山西农品工作台。</p><label>你的称呼<input name="name" maxlength="30" required placeholder="例如：小林"></label><div class="dialog-row"><label>关注的山西城市<select name="province" id="join-province" required></select></label><label>主要经营城市<input name="city" maxlength="30" placeholder="例如：大同"></label></div><label>选择计划<select name="tier" id="join-tier"><option>启航 OPC</option><option>进阶 OPC</option><option>伙伴 OPC</option></select></label><label class="age-check"><input type="checkbox" name="ack" required><span>我了解当前是体验档案，访客资料保存在本浏览器；登录后保存到所属账号，不构成正式入驻申请。</span></label><button class="cta-main form-submit" type="submit">进入我的工作台 <span>↗</span></button><small class="dialog-note">访客资料保存在本机；登录后账号资料保存到服务器，可在工作台修改。</small></form></dialog>
+</body>
+</html>

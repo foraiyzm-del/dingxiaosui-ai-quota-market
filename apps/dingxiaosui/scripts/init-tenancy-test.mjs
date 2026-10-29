@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+const root=path.resolve(import.meta.dirname,'..');process.chdir(root);
+const hosting=JSON.parse(fs.readFileSync('.openai/hosting.json','utf8'));
+if(hosting.project_id || !fs.readFileSync('.dev.vars','utf8').includes('APP_ENV=local'))throw Error('Use prepare-tenancy-test.mjs to create a fresh isolated copy first');
+if(fs.existsSync('.wrangler/state'))throw Error('Local state already exists. Refusing to migrate, overwrite or clear it. Use a new test directory.');
+const run=args=>{const r=spawnSync(process.execPath,args,{stdio:'inherit',env:{...process.env,ZDX_LOCAL_TEST_BUILD:'1',WRANGLER_SEND_METRICS:'false'}});if(r.error)throw r.error;if(r.status!==0)throw Error('Local command failed; original data remains untouched');};
+run(['scripts/sync-public.mjs']);run(['scripts/run-framework.mjs','build']);
+fs.copyFileSync('.dev.vars','dist/server/.dev.vars');
+const migrations=fs.readdirSync('drizzle').filter(x=>x.endsWith('.sql')).sort();
+for(const file of migrations)run(['--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','d1','execute','DB','--local','--config','dist/server/wrangler.json','--persist-to','.wrangler/state','--file',path.join('drizzle',file)]);
+fs.mkdirSync('.local-test',{recursive:true});fs.writeFileSync('.local-test/migration-results.json',JSON.stringify({at:new Date().toISOString(),localOnly:true,migrations,passed:true},null,2));
+console.log('Fresh local database initialized. Start: node scripts/start-tenancy-test.mjs');

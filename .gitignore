@@ -1,0 +1,43 @@
+# Dependencies and generated applications
+**/node_modules/
+**/.next/
+**/.vinext/
+**/dist/
+**/*.tsbuildinfo
+**/next-env.d.ts
+
+# Private runtime state; never publish customer data, cards or credentials
+**/local/
+**/data/
+**/.local-*/
+**/.ecs-test/
+**/.local-test/
+**/.internal-codex/
+**/.wrangler/
+**/.sites-runtime/
+**/.sites-package*/
+**/.ecs-package/
+**/work/
+**/outputs/
+**/artifacts/
+**/community-data.json
+**/.env*
+!**/.env.example
+**/.dev.vars*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-wal
+*.db-shm
+*.pem
+*.key
+*.log
+*.zip
+*.tar
+*.tar.gz
+.DS_Store
+Thumbs.db
+
+# Optional downloaded binaries only; apps/dingxiaosui/runtime IS source code
+/runtime/
+/vendor/

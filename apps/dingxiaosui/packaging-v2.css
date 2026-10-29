@@ -1,0 +1,8 @@
+.salon-system{grid-template-columns:minmax(240px,.7fr) minmax(0,1.3fr);min-height:420px}
+.salon-pack-cards,.package-stage{display:block;min-height:0;padding:0;background:none}
+.lilac-package-photo{height:100%;min-height:340px;margin:0;position:relative;overflow:hidden;border-radius:14px;background:#e8dce9;box-shadow:0 22px 50px #38214222}
+.lilac-package-photo img{display:block;width:100%;height:100%;object-fit:cover;object-position:center}
+.lilac-package-photo figcaption{position:absolute;left:16px;bottom:16px;padding:9px 12px;background:#fdf8f0e8;color:#4c3652;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.05em;backdrop-filter:blur(8px)}
+.salon-package{grid-template-columns:minmax(240px,.7fr) minmax(0,1.3fr)}
+@media(max-width:850px){.salon-system,.salon-package{grid-template-columns:1fr}.lilac-package-photo{min-height:0;aspect-ratio:3/2}}
+@media(max-width:520px){.lilac-package-photo figcaption{font-size:8px;left:8px;bottom:8px;padding:7px 9px}}

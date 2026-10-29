@@ -1,0 +1,32 @@
+.lilac-facade{overflow:hidden;border-radius:18px;background:#33243e;color:#fff;margin:0 0 22px;box-shadow:0 26px 65px #52375d36}
+.lilac-facade-photo{position:relative;overflow:hidden;background:#3b294b}
+.lilac-facade-photo img{width:100%;height:auto;display:block}
+.lilac-facade-sign{position:absolute;top:5%;left:6.3%;width:87.4%;height:18%;display:flex;justify-content:space-between;align-items:center;gap:1.2%;color:#fffaf4;text-align:left;text-shadow:0 2px 14px #1c122d8c;pointer-events:none}
+.lilac-sign-main{display:flex;align-items:center;justify-content:center;gap:1.5%;flex:1;min-width:0}
+.lilac-sign-main>span:last-child{display:grid;gap:.1vw}
+.lilac-sign-wing{width:19%;min-width:0;display:grid;justify-items:center;gap:2px;padding:0 1%;border-left:1px solid #f7e9f166;border-right:1px solid #f7e9f166;text-align:center}
+.lilac-sign-wing i{font-style:normal;color:#e7c0df;font-size:clamp(10px,1.5vw,22px);line-height:1}
+.lilac-sign-wing b{font-family:'Noto Serif SC',serif;font-size:clamp(7px,1.1vw,16px);white-space:nowrap;letter-spacing:.1em}
+.lilac-sign-wing small{font-size:clamp(4px,.55vw,9px);letter-spacing:.1em;color:#e9d3e6;white-space:nowrap}
+.lilac-facade-emblem{font-family:Georgia,serif;border:1px solid #f6e4efb3;border-radius:30% 46% 30% 46%;width:clamp(24px,5.5vw,76px);height:clamp(24px,5.5vw,76px);display:grid;place-items:center;font-size:clamp(16px,3.4vw,48px);line-height:1;background:#f5dcea14;box-shadow:0 0 24px #f7d9eb2b}
+.lilac-facade-sign strong{font-family:'Noto Serif SC',serif;font-size:clamp(17px,3vw,48px);font-weight:650;letter-spacing:.1em;white-space:nowrap;line-height:1.25}
+.lilac-sign-main small{font-family:Georgia,serif;font-size:clamp(6px,.94vw,13px);font-weight:700;letter-spacing:.29em;color:#f5dfeb;white-space:nowrap}
+.lilac-window-mark{position:absolute;top:58%;width:16%;min-height:10%;padding:9px 11px;background:#392447d6;border:1px solid #e8d6e3a6;color:#fff;display:grid;align-content:center;gap:3px;box-shadow:0 9px 23px #1c10267a;pointer-events:none}
+.lilac-window-mark.left{left:11%}.lilac-window-mark.right{right:11%}
+.lilac-window-mark small{font-size:clamp(5px,.7vw,10px);letter-spacing:.11em;color:#e7c8e3}
+.lilac-window-mark b{font-family:'Noto Serif SC',serif;font-size:clamp(8px,1.1vw,16px);line-height:1.45;letter-spacing:.04em}
+.lilac-facade-foot{display:flex;align-items:center;justify-content:space-between;gap:28px;padding:22px 29px 24px;background:linear-gradient(115deg,#2d1e38,#4c315b)}
+.lilac-facade-foot>div:first-child{max-width:700px}
+.lilac-facade-foot>div:first-child>span{font-family:Georgia,serif;font-size:10px;letter-spacing:.17em;color:#d7aedd}
+.lilac-facade-foot h3{font-family:'Noto Serif SC',serif;font-size:23px;line-height:1.35;margin:8px 0 6px;color:#fff}
+.lilac-facade-foot p{font-size:11px;line-height:1.8;color:#e2cfe4;margin:0}
+.lilac-facade-points{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end;max-width:360px}
+.lilac-facade-points span{border:1px solid #e4c8e46b;border-radius:999px;padding:7px 10px;color:#f0dced;font-size:9px;white-space:nowrap}
+.lilac-facade-details{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:#d9c6dd;border-top:1px solid #c9b1d0}
+.lilac-facade-details article{background:#faf6fa;color:#48354f;padding:20px;min-height:135px}
+.lilac-facade-details span{font-family:Georgia,serif;font-size:9px;letter-spacing:.1em;color:#aa7bb2}
+.lilac-facade-details b{display:block;font-family:'Noto Serif SC',serif;font-size:16px;margin:10px 0 6px}
+.lilac-facade-details p{color:#837286;font-size:10px;line-height:1.7;margin:0}
+.salon-section>.lilac-facade{margin-top:22px}
+@media(max-width:950px){.lilac-sign-wing{width:17%}.lilac-sign-wing b{font-size:8px;letter-spacing:0}.lilac-sign-wing small{display:none}.lilac-facade-sign strong{font-size:clamp(18px,3vw,35px)}.lilac-facade-details{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.lilac-facade-sign{left:5%;width:90%;gap:2px}.lilac-sign-wing{width:14%;padding:0;border:0}.lilac-sign-wing b{font-size:6px}.lilac-sign-wing i{font-size:9px}.lilac-facade-sign strong{font-size:clamp(13px,3.5vw,22px);letter-spacing:.03em}.lilac-sign-main small{font-size:5px;letter-spacing:0}.lilac-facade-emblem{width:22px;height:22px;font-size:13px;flex:none}.lilac-window-mark{padding:4px 5px;top:55%;width:21%}.lilac-window-mark b{font-size:7px}.lilac-window-mark small{font-size:5px}.lilac-facade-foot{display:block;padding:20px}.lilac-facade-foot h3{font-size:19px}.lilac-facade-points{justify-content:flex-start;margin-top:14px}.lilac-facade-details article{padding:14px;min-height:130px}.lilac-facade-details b{font-size:13px}}
