@@ -12,6 +12,7 @@ import { createPlatforms } from './platforms.mjs';
 import { createGeneration } from './generation.mjs';
 import { createPaymentProvider } from './payment-provider.mjs';
 import { configurePlatformCatalog } from './sample-platforms.mjs';
+import { createChannelBudgets } from './channel-budgets.mjs';
 
 const sha = s => createHash('sha256').update(s).digest('hex');
 const equal = (a, b) => {
@@ -27,6 +28,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
     CREATE TABLE IF NOT EXISTS demo_claims (user_id TEXT PRIMARY KEY, claimed_at TEXT NOT NULL);`);
   const quota = createQuota(db), payments = createPayments(db, config);
   const channels = createChannels(db, { secret: config.merchantKey });
+  const channelBudgets = createChannelBudgets(db);
   const platforms = createPlatforms(db, { quota, channels });
   const commerce = createCommerce(db, { quota, channels, platforms, secret: config.merchantKey });
   configurePlatformCatalog(db, quota, commerce, platforms);
@@ -117,8 +119,12 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
       if (!allowedOrigins.some(origin => new URL(origin).host === requestHost)) fail(403, '请求域名未配置');
       const url = new URL(req.url, `http://127.0.0.1:${port}`), route = url.pathname;
       if (!['GET', 'HEAD'].includes(req.method) && req.headers.origin && !allowedOrigins.includes(req.headers.origin)) fail(403, '请求来源无效');
-      rate(req.socket.remoteAddress ?? 'local', 300);
-      if (route === '/api/health') return json({ ok: true, qrConfigured: await qrReady(), modelCallsEnabled: platforms.listPlatforms({ public: true }).some(p => p.enabled && (p.availableCapabilities ? p.availableCapabilities.length > 0 : p.ready)), payment: await paymentInfo() });
+      const generationPoll = req.method === 'GET' && (route === '/api/health' || /^\/api\/v1\/(?:generation\/[^/]+(?:\/content)?|balance)$/.test(route) || /^\/api\/platforms\/[^/]+\/(?:jobs\/[^/]+(?:\/content)?|balance)$/.test(route));
+      const userScopedGeneration = req.method === 'POST' && (route === '/api/v1/generate' || /^\/api\/platforms\/[^/]+\/generate$/.test(route));
+      // Health checks and task polling do not spend a user's generation budget.
+      // Generation itself is counted per platform credential and user, so one shared network does not throttle everyone.
+      if (!generationPoll && !userScopedGeneration) rate(req.socket.remoteAddress ?? 'local', 300);
+      if (route === '/api/health') return json({ ok: true, service: 'quota-center', qrConfigured: await qrReady(), modelCallsEnabled: platforms.listPlatforms({ public: true }).some(p => p.enabled && (p.availableCapabilities ? p.availableCapabilities.length > 0 : p.ready)), payment: await paymentInfo() });
       if (route === '/api/admin/login' && req.method === 'POST') {
         rate('admin-login', 10, 15 * 60000);
         if (!equal((await input()).password, config.adminPassword)) fail(401, '密码不正确');
@@ -148,7 +154,13 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
           audit('platform.credential_viewed', { id }); return json({ projectId: id, apiKey: projectKeys[id], baseUrl: `${configuredOrigin || `http://127.0.0.1:${port}`}/api/v1` });
         }
         if (route === '/api/admin/inventory/generate' && req.method === 'POST') {
-          const result = commerce.generateInventory(await input()); audit('inventory.generated', result); return json(result, 201);
+          const result = commerce.generateInventory(await input());
+          const { codes, ...summary } = result;
+          audit('inventory.generated', summary); return json(result, 201);
+        }
+        if (route === '/api/admin/channel-budgets' && req.method === 'POST') {
+          const result = channelBudgets.saveBudget(await input());
+          audit('channel.budget_saved', result); return json(result);
         }
         if (route === '/api/admin/inventory/export' && req.method === 'GET') {
           const result = commerce.exportBatch({ batchId: url.searchParams.get('batchId') }); audit('inventory.exported', { batchId: result.batch?.id ?? url.searchParams.get('batchId') }); return json(result);
@@ -281,7 +293,22 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
       }
       if (route.startsWith('/api/v1/')) {
         const projectId = project();
-        if (route === '/api/v1/generate' && req.method === 'POST') return json(await generation.execute({ ...(await input(9 * 1024 * 1024)), projectId }));
+        if (route === '/api/v1/generate' && req.method === 'POST') {
+          const data = await input(9 * 1024 * 1024);
+          rate(`generate:${projectId}:${typeof data.userId === 'string' ? data.userId.slice(0, 200) : ''}`, 60);
+          return json(await generation.execute({ ...data, projectId }));
+        }
+        const delivery = route.match(/^\/api\/v1\/generation\/([^/]+)\/delivery$/);
+        if (delivery && req.method === 'POST') {
+          const data = await input();
+          if (data.action === 'accept') return json(await generation.acceptDelivery({ projectId, id: delivery[1], userId: data.userId }));
+          if (data.action === 'reject') {
+            const result = generation.rejectDelivery({ projectId, id: delivery[1], userId: data.userId, reason: data.reason });
+            audit('generation.refunded', { id: result.id, status: result.status });
+            return json(result);
+          }
+          fail(400, '请选择确认交付或退回次数');
+        }
         const job = route.match(/^\/api\/v1\/generation\/([^/]+)(\/content)?$/);
         if (job && req.method === 'GET') {
           if (job[2]) { const result = await generation.getContent({ projectId, id: job[1], userId: url.searchParams.get('userId') ?? undefined, index: url.searchParams.get('index') ?? 0 }); res.writeHead(200, { 'content-type': result.contentType }); return res.end(result.body); }

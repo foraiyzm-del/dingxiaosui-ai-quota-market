@@ -17,9 +17,19 @@ const quotaLabel = value => {
 };
 const quotaPricingFor = product => {
   const pricing = product.quotaPricing;
-  if (product.fulfillment !== 'on_payment' || pricing?.enabled !== true || !quotaTypes.every(type => Number.isSafeInteger(pricing.unitPriceMicros?.[type]) && pricing.unitPriceMicros[type] > 0 && pricing.unitPriceMicros[type] <= 1000000000000)) return null;
+  if (product.fulfillment !== 'on_payment' || pricing?.enabled !== true) return null;
   const maxCounts = Object.fromEntries(quotaTypes.map(type => [type, pricing.maxCounts?.[type] ?? 1000000]));
-  return quotaTypes.every(type => Number.isSafeInteger(maxCounts[type]) && maxCounts[type] >= 0 && maxCounts[type] <= 1000000) ? { ...pricing, maxCounts } : null;
+  if (!quotaTypes.every(type => Number.isSafeInteger(maxCounts[type]) && maxCounts[type] >= 0 && maxCounts[type] <= 1000000)) return null;
+  if (!quotaTypes.some(type => maxCounts[type] > 0)) return null;
+  const unitPriceMicros = {};
+  for (const type of quotaTypes) {
+    const price = pricing.unitPriceMicros?.[type] ?? 0;
+    if (!Number.isSafeInteger(price) || price < 0 || price > 1000000000000) return null;
+    // A closed capability may be priced at 0. An open one still needs a price.
+    if (maxCounts[type] > 0 && price <= 0) return null;
+    unitPriceMicros[type] = price;
+  }
+  return { ...pricing, maxCounts, unitPriceMicros };
 };
 const purchaseSummary = value => quotaLabel(value.quota) || `${number(value.units)} 次服务`;
 const optionsFor = product => {
@@ -36,6 +46,7 @@ function selectionFor(product, choice) {
     if (!pricing) return { valid: false, error: '此服务暂不支持自由组合。' };
     const quota = {};
     for (const type of quotaTypes) {
+      if (pricing.maxCounts[type] === 0) { quota[type] = 0; continue; }
       const raw = String(choice.customQuota?.[type] ?? '').trim();
       if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) > pricing.maxCounts[type]) return { valid: false, error: `${quotaNames[type]}请输入 0 至 ${number(pricing.maxCounts[type])} 的整数。` };
       quota[type] = Number(raw);
@@ -69,6 +80,7 @@ const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox
 }[name] ?? ''}</svg>`;
 const header = () => `<header class="shop-header"><div class="shop-header-inner"><a class="shop-brand" href="/" aria-label="额度集市首页"><span class="shop-mark" aria-hidden="true">额</span>额度集市</a><nav class="shop-nav" aria-label="主导航"><a href="/" ${location.pathname === '/' ? 'aria-current="page"' : ''}>服务商店</a><button type="button" id="shop-recent-open">我的订单</button></nav></div></header>`;
 const footer = `<footer class="shop-footer"><span>额度集市 · 服务次数商店</span><div><a href="/#shop-help">购买帮助</a><a href="/admin">商家管理</a></div></footer>`;
+export { quotaPricingFor, selectionFor };
 const recentStorage = 'quota-market-recent-orders';
 const recentOrders = () => {
   try { return JSON.parse(localStorage.getItem(recentStorage) || '[]').filter(item => item && /^[a-f0-9]{32}$/i.test(item.id) && /^[a-f0-9]{64}$/i.test(item.token)).slice(0, 10); } catch { return []; }

@@ -57,6 +57,7 @@ test('reference image upload, aspect ratio and protected image content keep cred
   const content = await generation.getContent({ ...input, id: initial.id });
   assert.deepEqual(content.body, png);
   assert.equal(content.contentType, 'image/png');
+  assert.equal((await generation.acceptDelivery({ ...input, id: initial.id })).status, 'succeeded');
   assert.equal((await generation.execute(request)).id, initial.id);
   await assert.rejects(generation.getContent({ ...input, id: initial.id, userId: 'other' }), error => error.status === 404);
   await assert.rejects(generation.getContent({ ...input, id: initial.id, index: 1 }), error => error.status === 400);
@@ -104,13 +105,13 @@ test('APIMart image submission survives restart, polls wrapped results and debit
   assert.equal((await generation.execute({ ...input, capability: 'image' })).id, initial.id);
   assert.equal(posts, 1);
   const restarted = createGeneration(db, { quota, channels, platforms, fetchImpl });
-  assert.deepEqual(await restarted.pollPending(), { checked: 1, settled: 1 });
+  assert.deepEqual(await restarted.pollPending(), { checked: 1, settled: 0 });
   const done = await restarted.getJob({ ...input, id: initial.id, refresh: true });
-  assert.equal(done.status, 'succeeded');
+  assert.equal(done.status, 'ready');
   assert.deepEqual(done.output, { images: [{ url: 'https://upload.apimart.ai/example.png' }] });
   assert.equal(done.tokenUsage.totalTokens, 206);
-  assert.equal(quota.balance(input).consumed, 1);
-  assert.equal(quota.balance(input).reserved, 0);
+  assert.equal(quota.balance(input).consumed, 0);
+  assert.equal(quota.balance(input).reserved, 1);
   assert.equal(posts, 1);
   assert.equal(gets, 1);
 });
@@ -147,10 +148,12 @@ test('APIMart video maps duration and downloads completed CDN content without fo
   });
   const initial = await generation.execute({ ...input, capability: 'video' });
   const done = await generation.getJob({ ...input, id: initial.id, refresh: true });
-  assert.equal(done.status, 'succeeded');
+  assert.equal(done.status, 'ready');
   assert.equal(done.output.contentAvailable, true);
-  assert.equal(quota.balance(input).consumed, 1);
+  assert.equal(quota.balance(input).consumed, 0);
   const content = await generation.getContent({ ...input, id: initial.id });
+  assert.equal((await generation.acceptDelivery({ ...input, id: initial.id })).status, 'succeeded');
+  assert.equal(quota.balance(input).consumed, 1);
   assert.equal(content.body.toString(), 'test-video');
 });
 

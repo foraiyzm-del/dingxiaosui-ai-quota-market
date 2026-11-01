@@ -86,14 +86,14 @@ export function createInventory(db, { quota, secret }) {
         revoked: row.revoked, redeemed: row.redeemed, quota: readQuota(row.quota_json) }));
   }
   return {
-    generate({ productId, projectId, skuId = null, productName, packageLabel, units, quantity, quota: requestedQuota }) {
+    generate({ productId, projectId, skuId = null, productName, packageLabel, units, quantity, quota: requestedQuota, mediaSpec = null }) {
       const allocation = normalizeQuota(requestedQuota), allocationKey = quotaKey(allocation);
       if (allocation) units = quotaTotal(allocation);
       return transaction(() => {
         const batchId = randomBytes(16).toString('hex'), createdAt = now();
         db.prepare(`INSERT INTO shop_card_batches(id,product_id,project_id,sku_id,product_name,package_label,units,quantity,created_at,quota_json)
           VALUES (?,?,?,?,?,?,?,?,?,?)`).run(batchId, productId, projectId, skuId, productName, packageLabel, units, quantity, createdAt, allocationKey);
-        const generated = quota.generateCodes({ projectId, units, quantity, quota: allocation, redeemable: false });
+        const generated = quota.generateCodes({ projectId, units, quantity, quota: allocation, redeemable: false, mediaSpec });
         const find = db.prepare('SELECT id FROM quota_codes WHERE code_hash=?');
         const insert = db.prepare(`INSERT INTO shop_inventory(id,batch_id,product_id,project_id,sku_id,units,status,
           code_ciphertext,code_iv,code_tag,code_suffix,created_at,quota_json) VALUES (?,?,?,?,?,?,'available',?,?,?,?,?,?)`);

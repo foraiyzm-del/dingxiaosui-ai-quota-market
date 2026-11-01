@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { APIMART_ENDPOINTS } from './apimart.mjs';
+import { createChannelBudgets } from './channel-budgets.mjs';
 
 const CAPABILITIES = new Set(['text', 'image', 'video']);
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -104,6 +105,7 @@ export function createChannels(db, { secret } = {}) {
     updated_at TEXT NOT NULL
   )`);
   if (!db.prepare('PRAGMA table_info(api_channels)').all().some(column => column.name === 'options_json')) db.exec("ALTER TABLE api_channels ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}' ");
+  const budgets = createChannelBudgets(db);
 
   function options(row) {
     try { return connectionOptions(JSON.parse(row.options_json || '{}')); }
@@ -114,6 +116,7 @@ export function createChannels(db, { secret } = {}) {
     return {
       id: row.id, name: row.name, baseUrl: row.base_url, enabled: row.enabled === 1,
       models: storedModels(row.models_json), hasKey: true, keyHint: row.key_hint,
+      issuanceBudget: budgets.getBudget(row.id),
       ...options(row),
       createdAt: row.created_at, updatedAt: row.updated_at,
     };
@@ -135,7 +138,7 @@ export function createChannels(db, { secret } = {}) {
     const removed = new Set(previousModels.map(model => JSON.stringify([model.capability, model.id])).filter(key => !retained.has(key)));
     if (!removed.size) return;
     if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='generation_jobs'").get()) {
-      for (const row of db.prepare("SELECT capability,model FROM generation_jobs WHERE channel_id=? AND capability IN ('image','video') AND status IN ('running','uncertain')").all(id)) {
+      for (const row of db.prepare("SELECT capability,model FROM generation_jobs WHERE channel_id=? AND capability IN ('image','video') AND status IN ('running','uncertain','ready')").all(id)) {
         if (removed.has(JSON.stringify([row.capability, row.model]))) fail(409, '该模型仍有待结算生成任务，请先完成或人工核对任务');
       }
     }
@@ -192,7 +195,7 @@ export function createChannels(db, { secret } = {}) {
         const configuredOptions = connectionOptions(input, previous ? options(previous) : {});
         if (previous && (address !== previous.base_url || configuredOptions.protocol !== options(previous).protocol || JSON.stringify(configuredOptions.endpoints) !== JSON.stringify(options(previous).endpoints)) &&
             db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='generation_jobs'").get() &&
-            db.prepare("SELECT 1 FROM generation_jobs WHERE channel_id=? AND capability IN ('image','video') AND status IN ('running','uncertain') LIMIT 1").get(id)) {
+            db.prepare("SELECT 1 FROM generation_jobs WHERE channel_id=? AND capability IN ('image','video') AND status IN ('running','uncertain','ready') LIMIT 1").get(id)) {
           fail(409, '渠道仍有待结算生成任务，请先完成任务再修改协议、接口地址或路径');
         }
         if (!previous && !suppliedKey) fail(400, '新建渠道时请填写 API 密钥');

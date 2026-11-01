@@ -44,7 +44,10 @@ test('structured business messages preserve context, validate JSON and are part 
   });
   const request = { ...input, messages: [{ role: 'system', content: '输出JSON' }, { role: 'user', content: '品牌知识库内容' }], responseFormat: 'json_object', maxTokens: 4096 };
   const result = await generation.execute(request);
-  assert.equal(result.status, 'succeeded');
+  assert.equal(result.status, 'ready');
+  assert.equal(quota.balance(input).reserved, 2);
+  const accepted = await generation.acceptDelivery({ ...input, id: result.id });
+  assert.equal(accepted.status, 'succeeded');
   assert.equal((await generation.execute(request)).id, result.id);
   await assert.rejects(generation.execute({ ...request, maxTokens: 4097 }), status(409));
   const invalid = await generation.execute({ ...request, requestId: 'bad-json' });
@@ -182,14 +185,18 @@ test('video jobs reserve through polling, use protected downloads and settle exa
   assert.equal(started.status, 'running');
   assert.equal(quota.balance(input).reserved, 2);
   const completed = await generation.getJob({ id: started.id, projectId: input.projectId, userId: input.userId, refresh: true });
-  assert.equal(completed.status, 'succeeded');
+  assert.equal(completed.status, 'ready');
   assert.equal(completed.output.contentAvailable, true);
-  assert.equal(completed.estimatedCostCents, 8);
+  assert.equal(quota.balance(input).reserved, 2);
+  assert.equal(quota.balance(input).consumed, 0);
+  const downloaded = await generation.getContent({ id: started.id, projectId: input.projectId, userId: input.userId });
+  const accepted = await generation.acceptDelivery({ ...input, id: started.id });
+  assert.equal(accepted.status, 'succeeded');
+  assert.equal(accepted.estimatedCostCents, 8);
   assert.equal(quota.balance(input).reserved, 0);
   assert.equal(quota.balance(input).consumed, 2);
   assert.equal((await generation.execute(videoInput)).status, 'succeeded');
   assert.equal(posts, 1);
-  const downloaded = await generation.getContent({ id: started.id, projectId: input.projectId, userId: input.userId });
   assert.equal(downloaded.contentType, 'video/mp4');
   assert.equal(downloaded.body.toString(), 'test-video-content');
 });
@@ -219,27 +226,33 @@ test('restart marks interrupted in-flight POST uncertain and does not resend it'
 });
 
 test('background polling settles videos after the user leaves and protects their channel configuration', async t => {
-  const { generation, channels, channel, platforms, input, quota } = setup(t, async (_url, init) =>
-    json({ id: 'video-background', status: init.method === 'POST' ? 'queued' : 'completed' }));
+  const { generation, channels, channel, platforms, input, quota } = setup(t, async (url, init) => {
+    if (String(url).endsWith('/content')) return new Response(Buffer.from('background-video'), { headers: { 'content-type': 'video/mp4' } });
+    return json({ id: 'video-background', status: init.method === 'POST' ? 'queued' : 'completed' });
+  });
   const job = await generation.execute({ ...input, capability: 'video' });
   platforms.savePlatform({ id: 'design', bindings: [] });
   assert.throws(() => channels.saveChannel({ ...channel, models: channel.models.filter(model => model.capability !== 'video') }), status(409));
   assert.throws(() => channels.saveChannel({ ...channel, baseUrl: 'https://another.example/v1' }), status(409));
-  assert.deepEqual(await generation.pollPending(), { checked: 1, settled: 1 });
-  assert.equal((await generation.getJob({ ...input, id: job.id })).status, 'succeeded');
+  assert.deepEqual(await generation.pollPending(), { checked: 1, settled: 0 });
+  assert.equal((await generation.getJob({ ...input, id: job.id })).status, 'ready');
+  assert.equal(quota.balance(input).consumed, 0);
+  assert.throws(() => channels.saveChannel({ ...channel, baseUrl: 'https://another.example/v1' }), status(409));
+  assert.equal((await generation.acceptDelivery({ ...input, id: job.id })).status, 'succeeded');
   assert.equal(quota.balance(input).consumed, 2);
   assert.doesNotThrow(() => channels.saveChannel({ ...channel, models: channel.models.filter(model => model.capability !== 'video') }));
 });
 
 test('asset URLs may contain signed CDN parameters but cannot expose the configured API key', async t => {
   let exposeKey = true;
-  const { generation, input } = setup(t, async () => json({ data: [{ url: `https://cdn.example/output.png?token=${exposeKey ? apiKey : 'signed-download-token'}` }] }));
+  const { generation, input, quota } = setup(t, async () => json({ data: [{ url: `https://cdn.example/output.png?token=${exposeKey ? apiKey : 'signed-download-token'}` }] }));
   const blocked = await generation.execute({ ...input, capability: 'image' });
   assert.equal(blocked.status, 'uncertain');
   assert.equal(JSON.stringify(blocked).includes(apiKey), false);
   exposeKey = false;
   const allowed = await generation.execute({ ...input, requestId: 'signed-image', capability: 'image' });
-  assert.equal(allowed.status, 'succeeded');
+  assert.equal(allowed.status, 'ready');
+  assert.equal(quota.balance(input).consumed, 0);
   assert.match(allowed.output.images[0].url, /signed-download-token/u);
 });
 
@@ -313,8 +326,9 @@ test('real HTTP adapter sends exact paths and multipart video requests, polls, d
   assert.match(sentVideo.headers['content-type'], /^multipart\/form-data; boundary=/u);
   assert.match(sentVideo.raw, /name="model"\r\n\r\nvideo-model/u);
   assert.match(sentVideo.raw, /name="seconds"\r\n\r\n8/u);
-  assert.equal((await generation.pollPending()).settled, 1);
+  assert.equal((await generation.pollPending()).settled, 0);
   const content = await generation.getContent({ ...input, id: video.id });
+  assert.equal((await generation.acceptDelivery({ ...input, id: video.id })).status, 'succeeded');
   assert.equal(content.body.toString(), 'local-mp4-test-bytes');
   const redirect = await generation.execute({ ...input, requestId: 'http-redirect', prompt: 'redirect' });
   assert.equal(redirect.status, 'uncertain');

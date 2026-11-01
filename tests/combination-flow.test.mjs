@@ -15,6 +15,8 @@ test('HTTP combination purchase → signed payment → one code → APIMart imag
   const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
   const counts = { text: 0, image: 0, video: 0, polls: 0 };
   const fetchImpl = async (address, init) => {
+    if (address.includes('/isolated-image.png')) return new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'), { headers: { 'content-type': 'image/png' } });
+    if (address.includes('/isolated-video.mp4')) return new Response(Buffer.from([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109, 0, 0, 0, 0, 105, 115, 111, 109]), { headers: { 'content-type': 'video/mp4' } });
     assert.equal(init.headers.Authorization, 'Bearer simulated-apimart-secret');
     if (address.endsWith('/chat/completions')) {
       counts.text++; return Response.json({ choices: [{ message: { content: `模拟丁小穗文案 ${counts.text}` } }] });
@@ -83,7 +85,8 @@ test('HTTP combination purchase → signed payment → one code → APIMart imag
       else {
         assert.equal(job.status, 'running');
         assert.equal((await client.balance(userId)).byCapability[capability].reserved, 1);
-        assert.equal((await client.job({ id: job.id, userId })).status, 'succeeded');
+        assert.equal((await client.job({ id: job.id, userId })).status, 'ready');
+        assert.equal((await client.deliver({ id: job.id, userId, action: 'accept' })).status, 'succeeded');
       }
       assert.equal((await client.generate(input)).id, job.id);
     }

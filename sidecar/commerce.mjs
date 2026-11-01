@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createInventory } from './inventory.mjs';
 import { CAPABILITIES, normalizeQuota, quotaTotal, quotaKey, readQuota } from './quota-values.mjs';
+import { mediaSpec } from './media-spec.mjs';
 
 const MAX_UNITS = 1_000_000;
 const MAX_PRICE_CENTS = 100_000_000;
@@ -195,7 +196,7 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
   db.exec('BEGIN IMMEDIATE');
   try {
     for (const [table, columns] of [
-      ['shop_products', [['package_options', 'TEXT'], ['custom_pricing', 'TEXT'], ['quota_pricing', 'TEXT'], ['fulfillment', "TEXT NOT NULL DEFAULT 'stock'"]]],
+      ['shop_products', [['package_options', 'TEXT'], ['custom_pricing', 'TEXT'], ['quota_pricing', 'TEXT'], ['fulfillment', "TEXT NOT NULL DEFAULT 'stock'"], ['media_spec_json', 'TEXT']]],
       ['shop_orders', [['selection_type', "TEXT NOT NULL DEFAULT 'standard'"], ['package_label', "TEXT NOT NULL DEFAULT '标准套餐'"], ['sku_id', 'TEXT'], ['capabilities', "TEXT NOT NULL DEFAULT '[]'"], ['api_bindings', "TEXT NOT NULL DEFAULT '[]'"], ['inventory_id', 'TEXT'], ['expires_at', 'TEXT'], ['closed_at', 'TEXT'], ['closed_reason', 'TEXT'], ['quota_json', 'TEXT'], ['fulfillment', "TEXT NOT NULL DEFAULT 'stock'"]]],
     ]) {
       const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
@@ -230,6 +231,7 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
       units: row.units, priceCents: row.price_cents, active: row.active === 1,
       createdAt: row.created_at, updatedAt: row.updated_at,
       fulfillment: fulfillment(row.fulfillment), quotaPricing: quotaPricing(readJson(row.quota_pricing)),
+      mediaSpec: mediaSpec(readJson(row.media_spec_json)),
       packageOptions: packageOptions(readJson(row.package_options), row.units, row.price_cents).map(option => {
         const stockAvailable = inventory.available({ productId: row.id, projectId: option.projectId ?? row.project_id, skuId: option.id, units: option.units, quota: option.quota });
         if (admin === true) return { ...option, stockAvailable };
@@ -334,7 +336,7 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
 
     saveProduct({ id, projectId, name, description = '', units, priceCents, active = true,
       packageOptions: requestedOptions, customPricing: requestedCustomPricing,
-      quotaPricing: requestedQuotaPricing, fulfillment: requestedFulfillment } = {}) {
+      quotaPricing: requestedQuotaPricing, fulfillment: requestedFulfillment, mediaSpec: requestedMediaSpec } = {}) {
       id = identifier(id, '商品ID');
       projectId = identifier(projectId, '项目ID');
       name = text(name, '商品名称', 160);
@@ -372,16 +374,17 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
         const pricing = customPricing(requestedCustomPricing === undefined && old
           ? readJson(old.custom_pricing) : requestedCustomPricing, units, priceCents);
         const allocationPricing = quotaPricing(requestedQuotaPricing === undefined && old ? readJson(old.quota_pricing) : requestedQuotaPricing);
+        const spec = mediaSpec(requestedMediaSpec === undefined && old ? readJson(old.media_spec_json) : requestedMediaSpec);
         const delivery = fulfillment(requestedFulfillment ?? old?.fulfillment ?? 'stock');
         if (allocationPricing.enabled && delivery !== 'on_payment') fail(400, '自定义组合请使用付款后自动生成卡密');
         const timestamp = now();
-        db.prepare(`INSERT INTO shop_products (id,project_id,name,description,units,price_cents,active,created_at,updated_at,package_options,custom_pricing,quota_pricing,fulfillment)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,
+        db.prepare(`INSERT INTO shop_products (id,project_id,name,description,units,price_cents,active,created_at,updated_at,package_options,custom_pricing,quota_pricing,fulfillment,media_spec_json)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id,
           name=excluded.name,description=excluded.description,units=excluded.units,price_cents=excluded.price_cents,
           active=excluded.active,updated_at=excluded.updated_at,package_options=excluded.package_options,custom_pricing=excluded.custom_pricing,
-          quota_pricing=excluded.quota_pricing,fulfillment=excluded.fulfillment`)
+          quota_pricing=excluded.quota_pricing,fulfillment=excluded.fulfillment,media_spec_json=excluded.media_spec_json`)
           .run(id, projectId, name, description, units, priceCents, active ? 1 : 0, timestamp, timestamp,
-            JSON.stringify(options), JSON.stringify(pricing), JSON.stringify(allocationPricing), delivery);
+            JSON.stringify(options), JSON.stringify(pricing), JSON.stringify(allocationPricing), delivery, spec ? JSON.stringify(spec) : null);
         return productRecord(db.prepare('SELECT * FROM shop_products WHERE id=?').get(id));
       });
     },
@@ -508,8 +511,9 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
         const allocation = readQuota(row.quota_json);
         let generatedBatchId;
         if (row.fulfillment === 'on_payment' && !db.prepare('SELECT id FROM shop_inventory WHERE order_id=?').get(id)) {
+          const soldSpec = mediaSpec(readJson(db.prepare('SELECT media_spec_json FROM shop_products WHERE id=?').get(row.product_id)?.media_spec_json));
           generatedBatchId = inventory.generate({ productId: row.product_id, projectId: row.project_id, skuId, productName: row.product_name,
-            packageLabel: row.package_label, units: row.units, quantity: 1, quota: allocation }).batchId;
+            packageLabel: row.package_label, units: row.units, quantity: 1, quota: allocation, mediaSpec: soldSpec }).batchId;
         }
         const reserved = inventory.reserve({ productId: row.product_id, projectId: row.project_id, skuId, units: row.units, orderId: id, quota: allocation, batchId: generatedBatchId });
         const { code } = inventory.fulfill({ orderId: id });
@@ -541,9 +545,10 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
 
     expireOrders,
 
-    generateInventory({ productId, packageId, units, quantity } = {}) {
+    generateInventory({ productId, packageId, units, quantity, delivery = 'stock' } = {}) {
       productId = identifier(productId, '商品ID');
       quantity = positiveInteger(quantity, '制卡张数', 1000);
+      if (!['stock', 'direct'].includes(delivery)) fail(400, '请选择待售库存或员工直接发码');
       if (packageId !== undefined && units !== undefined) fail(400, '固定套餐与自定义每卡次数不能同时指定');
       return transaction(() => {
         const row = db.prepare('SELECT * FROM shop_products WHERE id=?').get(productId);
@@ -564,7 +569,12 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
           allocation = selected.quota ?? null;
           projectId = selected.projectId ?? row.project_id;
         }
-        return inventory.generate({ productId, projectId, skuId, productName: product.name, packageLabel: label, units, quantity, quota: allocation });
+        if (allocation && platforms) allocationRouting(projectId, allocation);
+        if (delivery === 'direct') {
+          return { ...quota.generateCodes({ projectId, units, quantity, quota: allocation, mediaSpec: product.mediaSpec }),
+            productName: product.name, packageLabel: label };
+        }
+        return inventory.generate({ productId, projectId, skuId, productName: product.name, packageLabel: label, units, quantity, quota: allocation, mediaSpec: product.mediaSpec });
       });
     },
 

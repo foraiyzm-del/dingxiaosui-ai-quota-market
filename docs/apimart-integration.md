@@ -34,7 +34,7 @@
 - GPT Image 2.5：每次一张，`size: "1:1"`、`resolution: "1k"`、`quality: "low"`，即 1024 × 1024 方图。
 - Seedance 2.0：`duration: 5`、`resolution: "480p"`、`size: "16:9"`、`generate_audio: false`。
 
-这些规格位于 `sidecar/apimart.mjs`。调用方指定合法 `size`、`aspectRatio` 或视频 `seconds` 时会覆盖对应参数；视频 `seconds` 转成 APIMart 的数值 `duration`。丁小穗新卡固定使用 5 秒服务；旧体验卡仍沿用自身的 15 秒服务。
+这些规格位于 `sidecar/apimart.mjs`。没有商品规格时，调用方指定的合法 `size`、`aspectRatio` 或视频 `seconds` 仍会覆盖对应参数。新卡商品绑定 5 秒 / 480p / 无声后，发卡中心会按该规格裁剪更长或带声的请求，仍只扣 1 次视频。旧体验卡不走这张新卡，仍是 15 秒、720p、有声。
 
 丁小穗文案使用 `messages` 保留业务提示词与知识库，JSON 模式，并按任务传输出长度（主对话 3500 tokens）。图生图先在服务端将不超过 6 MiB 的有效 PNG/JPEG/WebP 上传至 `/v1/uploads/images`，再用 `image_urls` 生成。图片与视频可通过受保护的中心内容接口下载到丁小穗。尚未实现所有模型的多模态参考和高级参数表单。
 

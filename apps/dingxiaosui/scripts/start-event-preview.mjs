@@ -79,7 +79,7 @@ console.log('Administrator AI Key settings: '+process.env.APP_ORIGIN+'/platform/
 console.log('Activation management: '+process.env.APP_ORIGIN+'/platform/event-codes');
 if(needsAdmin)console.log('Create the first administrator using the one-use link in: '+path.join(dataDir,'admin-setup.txt'));
 console.log('Private event data: '+dataDir+'; keep config.json with it. No users or cards were created; no model request was sent.');
-const child=spawn(process.execPath,[path.join(appDir,'server.js')],{cwd:appDir,env:{...process.env,NODE_ENV:'production',PORT:String(port),HOSTNAME:'127.0.0.1'},stdio:'inherit'});
+const child=spawn(process.execPath,[path.join(appDir,'server.js')],{cwd:appDir,env:{...process.env,NODE_ENV:'production',PORT:String(port),HOSTNAME:'127.0.0.1',DING_BUILD_ID:process.env.DING_BUILD_ID||buildId},stdio:'inherit'});
 child.on('error',error=>{console.error(error.message);process.exitCode=1});
 child.on('exit',code=>{process.exitCode=code||0});
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,()=>child.kill(signal));

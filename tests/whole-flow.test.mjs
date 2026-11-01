@@ -20,6 +20,7 @@ test('complete HTTP flow: platform/channel → stocked SKU → signed payment �
     if (address.endsWith('/chat/completions')) return Response.json({ choices: [{ message: { content: '本地测试营销文案结果' } }], usage: { prompt_tokens: 20, completion_tokens: 10 } });
     if (address.endsWith('/images/generations')) return Response.json({ data: [{ b64_json: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' }] });
     if (address.endsWith('/videos')) return Response.json({ id: 'test-video-job', status: 'queued' });
+    if (address.endsWith('/videos/test-video-job/content')) return new Response(Buffer.from([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109, 0, 0, 0, 0, 105, 115, 111, 109]), { headers: { 'content-type': 'video/mp4' } });
     if (address.endsWith('/videos/test-video-job')) return Response.json({ id: 'test-video-job', status: 'completed', url: 'https://cdn.example/video.mp4' });
     throw new Error('Unexpected mock endpoint');
   };
@@ -72,7 +73,8 @@ test('complete HTTP flow: platform/channel → stocked SKU → signed payment �
   assert.equal(image.status, 'succeeded'); assert.match(image.output.images[0].dataUrl, /^data:image\/png;base64,/);
   const video = await client.generate({ userId, requestId: 'first-video', capability: 'video', prompt: '测试视频' });
   assert.equal(video.status, 'running'); assert.equal((await client.balance(userId)).reserved, 1);
-  const completed = await client.job({ id: video.id, userId }); assert.equal(completed.status, 'succeeded');
+  const completed = await client.job({ id: video.id, userId }); assert.equal(completed.status, 'ready');
+  assert.equal((await client.deliver({ id: video.id, userId, action: 'accept' })).status, 'succeeded');
   const balance = await client.balance(userId);
   assert.equal(balance.available, 7); assert.equal(balance.consumed, 3); assert.equal(balance.reserved, 0);
   // The public portal has its own anonymous identity and cannot inspect another user's jobs.
