@@ -545,9 +545,10 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
 
     expireOrders,
 
-    generateInventory({ productId, packageId, units, quantity } = {}) {
+    generateInventory({ productId, packageId, units, quantity, delivery = 'stock' } = {}) {
       productId = identifier(productId, '商品ID');
       quantity = positiveInteger(quantity, '制卡张数', 1000);
+      if (!['stock', 'direct'].includes(delivery)) fail(400, '请选择待售库存或员工直接发码');
       if (packageId !== undefined && units !== undefined) fail(400, '固定套餐与自定义每卡次数不能同时指定');
       return transaction(() => {
         const row = db.prepare('SELECT * FROM shop_products WHERE id=?').get(productId);
@@ -567,6 +568,11 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
           skuId = selected.id; units = selected.units; label = selected.label;
           allocation = selected.quota ?? null;
           projectId = selected.projectId ?? row.project_id;
+        }
+        if (allocation && platforms) allocationRouting(projectId, allocation);
+        if (delivery === 'direct') {
+          return { ...quota.generateCodes({ projectId, units, quantity, quota: allocation, mediaSpec: product.mediaSpec }),
+            productName: product.name, packageLabel: label };
         }
         return inventory.generate({ productId, projectId, skuId, productName: product.name, packageLabel: label, units, quantity, quota: allocation, mediaSpec: product.mediaSpec });
       });

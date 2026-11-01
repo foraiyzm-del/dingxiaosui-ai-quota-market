@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { APIMART_ENDPOINTS } from './apimart.mjs';
+import { createChannelBudgets } from './channel-budgets.mjs';
 
 const CAPABILITIES = new Set(['text', 'image', 'video']);
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
@@ -104,6 +105,7 @@ export function createChannels(db, { secret } = {}) {
     updated_at TEXT NOT NULL
   )`);
   if (!db.prepare('PRAGMA table_info(api_channels)').all().some(column => column.name === 'options_json')) db.exec("ALTER TABLE api_channels ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}' ");
+  const budgets = createChannelBudgets(db);
 
   function options(row) {
     try { return connectionOptions(JSON.parse(row.options_json || '{}')); }
@@ -114,6 +116,7 @@ export function createChannels(db, { secret } = {}) {
     return {
       id: row.id, name: row.name, baseUrl: row.base_url, enabled: row.enabled === 1,
       models: storedModels(row.models_json), hasKey: true, keyHint: row.key_hint,
+      issuanceBudget: budgets.getBudget(row.id),
       ...options(row),
       createdAt: row.created_at, updatedAt: row.updated_at,
     };

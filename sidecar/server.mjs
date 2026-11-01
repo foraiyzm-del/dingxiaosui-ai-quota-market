@@ -12,6 +12,7 @@ import { createPlatforms } from './platforms.mjs';
 import { createGeneration } from './generation.mjs';
 import { createPaymentProvider } from './payment-provider.mjs';
 import { configurePlatformCatalog } from './sample-platforms.mjs';
+import { createChannelBudgets } from './channel-budgets.mjs';
 
 const sha = s => createHash('sha256').update(s).digest('hex');
 const equal = (a, b) => {
@@ -27,6 +28,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
     CREATE TABLE IF NOT EXISTS demo_claims (user_id TEXT PRIMARY KEY, claimed_at TEXT NOT NULL);`);
   const quota = createQuota(db), payments = createPayments(db, config);
   const channels = createChannels(db, { secret: config.merchantKey });
+  const channelBudgets = createChannelBudgets(db);
   const platforms = createPlatforms(db, { quota, channels });
   const commerce = createCommerce(db, { quota, channels, platforms, secret: config.merchantKey });
   configurePlatformCatalog(db, quota, commerce, platforms);
@@ -152,7 +154,13 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
           audit('platform.credential_viewed', { id }); return json({ projectId: id, apiKey: projectKeys[id], baseUrl: `${configuredOrigin || `http://127.0.0.1:${port}`}/api/v1` });
         }
         if (route === '/api/admin/inventory/generate' && req.method === 'POST') {
-          const result = commerce.generateInventory(await input()); audit('inventory.generated', result); return json(result, 201);
+          const result = commerce.generateInventory(await input());
+          const { codes, ...summary } = result;
+          audit('inventory.generated', summary); return json(result, 201);
+        }
+        if (route === '/api/admin/channel-budgets' && req.method === 'POST') {
+          const result = channelBudgets.saveBudget(await input());
+          audit('channel.budget_saved', result); return json(result);
         }
         if (route === '/api/admin/inventory/export' && req.method === 'GET') {
           const result = commerce.exportBatch({ batchId: url.searchParams.get('batchId') }); audit('inventory.exported', { batchId: result.batch?.id ?? url.searchParams.get('batchId') }); return json(result);

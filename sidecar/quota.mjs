@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { CAPABILITIES, normalizeQuota, quotaTotal, readQuota } from './quota-values.mjs';
 import { mediaSpec } from './media-spec.mjs';
+import { createChannelBudgets } from './channel-budgets.mjs';
 
 const MAX_UNITS = 1_000_000;
 const MAX_CODES = 1_000;
@@ -50,6 +51,7 @@ function hashCode(value) {
  */
 export function createQuota(db) {
   db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  const channelBudgets = createChannelBudgets(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS quota_projects (
       id TEXT PRIMARY KEY,
@@ -214,6 +216,7 @@ export function createQuota(db) {
       const spec = mediaSpec(requestedSpec);
       return transaction(() => {
         requireProject(id);
+        channelBudgets.allocateForProject({ projectId: id, quota, quantity });
         const createdAt = new Date().toISOString();
         const insert = db.prepare(`INSERT INTO quota_codes
           (id, project_id, code_hash, code_suffix, units, created_at, issuance_state, quota_json, media_spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
