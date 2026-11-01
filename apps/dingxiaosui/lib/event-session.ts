@@ -21,7 +21,7 @@ export async function eventIdentity(headers:Headers):Promise<Identity|null>{
  return row?{provider:'event',userId:row.code_id,email:'',displayName:row.display_name,fullName:null,platformAdmin:false}:null;
 }
 export async function eventSessionStatus(headers:Headers){
- const enabled=eventSessionEnabled(),settings=quotaCenterPublicSettings(),anonymous={enabled,authenticated:false,platformAdmin:false,activated:false,active:false,...settings};
+ const enabled=eventSessionEnabled(),settings=quotaCenterPublicSettings(),identity={service:'dingxiaosui' as const,buildId:vars().DING_BUILD_ID||''},anonymous={enabled,authenticated:false,platformAdmin:false,activated:false,active:false,...identity,...settings};
  if(!enabled)return anonymous;
  const password=await passwordIdentity(headers),who=password||await eventIdentity(headers);if(!who)return anonymous;
  const user=who.provider==='quota_center'
@@ -32,7 +32,7 @@ export async function eventSessionStatus(headers:Headers){
  if(!user)return anonymous;
  const platformAdmin=password?.platformAdmin===true;
  const wallet=who.provider==='quota_center'?await quotaCreditSummary(user.id):await eventCreditSummary(user.id);
- return {enabled,authenticated:true,platformAdmin,activated:platformAdmin||wallet.activated,active:platformAdmin||wallet.active,creditSource:who.provider==='quota_center'?'quota_center':'event',user:{id:user.id,displayName:user.display_name},wallet,...settings};
+ return {enabled,authenticated:true,platformAdmin,activated:platformAdmin||wallet.activated,active:platformAdmin||wallet.active,creditSource:who.provider==='quota_center'?'quota_center':'event',user:{id:user.id,displayName:user.display_name},wallet,...identity,...settings};
 }
 async function limitLogin(request:Request){
  // One shared conference Wi-Fi can activate all 50 guests and tolerate retries.

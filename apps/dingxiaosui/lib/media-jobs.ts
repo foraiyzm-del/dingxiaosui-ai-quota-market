@@ -181,7 +181,7 @@ function rowProvider(row:JobRow):MediaProvider{if(row.provider_kind==='quota-cen
 async function createQuotaMediaJob(user:Actor,options:CreateOptions,key:string,hash:string){
  const account=await quotaAccount(user.id);if(!account)throw new ApiError(403,'请先激活创作额度');
  if(options.modelId)throw new ApiError(400,'此激活码使用已开通的创作服务，请选择平台模型');
- const id=crypto.randomUUID(),now=new Date().toISOString(),payload={userId:account.centerUserId,requestId:'media:'+id,capability:options.capability,prompt:agricultureMediaPrompt(options.prompt,options.capability),aspectRatio:options.ratio,...(options.size?{size:options.size}:{}),...(options.capability==='video'?{seconds:options.duration??5}:{}),...(options.referenceImage?{referenceImage:options.referenceImage}:{})};
+ const id=crypto.randomUUID(),now=new Date().toISOString(),payload={userId:account.centerUserId,requestId:'media:'+id,capability:options.capability,prompt:agricultureMediaPrompt(options.prompt,options.capability),aspectRatio:options.ratio,...(options.size?{size:options.size}:{}),...(options.capability==='video'?{seconds:5}:{}),...(options.referenceImage?{referenceImage:options.referenceImage}:{})};
  const cipher=await encryptQuotaPayload(payload);
  try{await db().prepare("INSERT INTO media_jobs(id,user_id,capability,idempotency_key,request_hash,prompt,model_name,provider_kind,provider_endpoint,provider_model,key_cipher,status,created_at,updated_at,poll_after) VALUES (?,?,?,?,?,?,?,'quota-center','','quota-center',?,'queued',?,?,?)").bind(id,user.id,options.capability,key,hash,options.prompt,options.capability==='image'?'图片生成':'视频生成',cipher,now,now,Date.now()+150000).run();}
  catch(error){const concurrent=await db().prepare('SELECT * FROM media_jobs WHERE user_id=? AND idempotency_key=?').bind(user.id,key).first<JobRow>();if(!concurrent)throw error;if(concurrent.request_hash!==hash)throw new ApiError(409,'该任务标识已对应另一份内容');return {job:publicJob(concurrent),created:false};}
@@ -214,11 +214,27 @@ async function saveQuotaOutput(row:JobRow){
  const output=await putAsset(row,bytes,row.capability==='image'?imageMime(bytes):videoMime(bytes),0);
  await updateQuotaJob(row.id,'succeeded',null,[output]);
 }
+async function settleReadyQuota(row:JobRow,action:'accept'|'reject',reason?:string){
+ const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)return;
+ await quotaCenterRequest('/generation/'+encodeURIComponent(row.upstream_id)+'/delivery',{userId:account.centerUserId,action,...(reason?{reason}:{})});
+}
 async function acceptQuotaResult(row:JobRow,result:QuotaJob){
  if(row.upstream_id&&row.upstream_id!==result.id)throw new ApiError(502,'创作任务标识不一致，请联系管理员核对');
- if(result.status==='succeeded'){
+ if(result.status==='succeeded'||result.status==='ready'){
   await updateQuotaJob(row.id,'saving','作品已生成，正在保存',undefined,result.id);
-  await saveQuotaOutput(await ownedMediaJob(row.user_id,row.id));
+  try{
+   await saveQuotaOutput(await ownedMediaJob(row.user_id,row.id));
+   if(result.status==='ready')await settleReadyQuota(await ownedMediaJob(row.user_id,row.id),'accept');
+  }catch(error){
+   if(result.status!=='ready')throw error;
+   const account=await quotaAccount(row.user_id);
+   let current:QuotaJob|null=null;
+   try{if(account)current=verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generation/'+encodeURIComponent(result.id)+'?userId='+encodeURIComponent(account.centerUserId)),account.centerUserId,row.capability);}catch{current=null;}
+   if(current?.status==='failed'){await updateQuotaJob(row.id,'failed',current.error||'作品未能交付，预留次数已退回');return;}
+   const permanent=error instanceof ApiError&&/格式不受支持|不是支持的 MP4|超过本平台保存上限/.test(error.message);
+   if(permanent){try{await settleReadyQuota(await ownedMediaJob(row.user_id,row.id),'reject','作品未能保存到本站，预留次数退回');}catch{/* Center refund is idempotent. */}await updateQuotaJob(row.id,'failed','作品未能保存，预留次数已退回');return;}
+   throw error;
+  }
  }else if(result.status==='failed')await updateQuotaJob(row.id,'failed','本次生成失败，创作中心已返还预留次数。',undefined,result.id);
  else if(result.status==='uncertain')await updateQuotaJob(row.id,'unknown','结果待核对，次数仍预留；请保留原任务并联系管理员。',undefined,result.id);
  else await updateQuotaJob(row.id,result.status,null,undefined,result.id);

@@ -17,7 +17,7 @@ async function api(route, options = {}) {
   const data = await res.json(); if (!res.ok) throw Object.assign(new Error(data.error ?? '请求失败'), { status: res.status }); return data;
 }
 const post = (route, body = {}) => api(route, { method: 'POST', body: JSON.stringify(body) });
-const statusNames = { pending:'待付款', fulfilled:'已发卡', awaiting_payment:'待付款', submitted:'待核验', approved:'到账已核实', delivered:'已发卡', unused:'未兑换', redeemed:'已兑换', reserved:'预扣中', committed:'已消费', cancelled:'已取消', expired:'已过期', available:'可售', sold:'已售', revoked:'已停用', queued:'等待执行', running:'执行中', succeeded:'成功', failed:'失败', uncertain:'待核对' };
+const statusNames = { pending:'待付款', fulfilled:'已发卡', awaiting_payment:'待付款', submitted:'待核验', approved:'到账已核实', delivered:'已发卡', unused:'未兑换', redeemed:'已兑换', reserved:'预扣中', committed:'已消费', cancelled:'已取消', expired:'已过期', available:'可售', sold:'已售', revoked:'已停用', queued:'等待执行', running:'执行中', ready:'待交付', succeeded:'成功', failed:'失败', uncertain:'待核对' };
 const badge = s => `<span class="badge ${s === 'fulfilled' || s === 'delivered' || s === 'committed' || s === 'redeemed' || s === 'succeeded' || s === 'sold' ? 'good' : s === 'submitted' || s === 'reserved' || s === 'uncertain' || s === 'running' || s === 'queued' ? 'wait' : 'blue'}">${esc(statusNames[s] ?? s)}</span>`;
 function empty(title, body) { return `<div class="empty"><strong>${esc(title)}</strong><p class="small">${esc(body)}</p></div>`; }
 function metric(label, number, unit = '') { return `<div class="metric"><span>${esc(label)}</span><strong>${esc(number)}</strong><em>${esc(unit)}</em></div>`; }

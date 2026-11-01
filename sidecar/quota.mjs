@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { CAPABILITIES, normalizeQuota, quotaTotal, readQuota } from './quota-values.mjs';
+import { mediaSpec } from './media-spec.mjs';
 
 const MAX_UNITS = 1_000_000;
 const MAX_CODES = 1_000;
@@ -103,6 +104,7 @@ export function createQuota(db) {
   try {
     const codes = new Set(db.prepare('PRAGMA table_info(quota_codes)').all().map(column => column.name));
     if (!codes.has('quota_json')) db.exec('ALTER TABLE quota_codes ADD COLUMN quota_json TEXT');
+    if (!codes.has('media_spec_json')) db.exec('ALTER TABLE quota_codes ADD COLUMN media_spec_json TEXT');
     const usages = new Set(db.prepare('PRAGMA table_info(quota_usage)').all().map(column => column.name));
     if (!usages.has('capability')) db.exec('ALTER TABLE quota_usage ADD COLUMN capability TEXT');
     if (!usages.has('allocations_json')) db.exec('ALTER TABLE quota_usage ADD COLUMN allocations_json TEXT');
@@ -203,24 +205,25 @@ export function createQuota(db) {
       });
     },
 
-    generateCodes({ projectId: id, quantity, units, quota: requestedQuota, redeemable = true } = {}) {
+    generateCodes({ projectId: id, quantity, units, quota: requestedQuota, redeemable = true, mediaSpec: requestedSpec } = {}) {
       id = projectId(id);
       quantity = positiveInteger(quantity, 'quantity', MAX_CODES);
       const quota = normalizeQuota(requestedQuota);
       units = quota ? quotaTotal(quota) : positiveInteger(units, 'units');
       if (typeof redeemable !== 'boolean') fail(400, 'redeemable must be a boolean');
+      const spec = mediaSpec(requestedSpec);
       return transaction(() => {
         requireProject(id);
         const createdAt = new Date().toISOString();
         const insert = db.prepare(`INSERT INTO quota_codes
-          (id, project_id, code_hash, code_suffix, units, created_at, issuance_state, quota_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+          (id, project_id, code_hash, code_suffix, units, created_at, issuance_state, quota_json, media_spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         const codes = [];
         for (let index = 0; index < quantity; index += 1) {
           const code = `QTA-${randomBytes(18).toString('hex').toUpperCase()}`;
-          insert.run(randomUUID(), id, hashCode(code), code.slice(-4), units, createdAt, redeemable ? 'active' : 'stock', quota ? JSON.stringify(quota) : null);
+          insert.run(randomUUID(), id, hashCode(code), code.slice(-4), units, createdAt, redeemable ? 'active' : 'stock', quota ? JSON.stringify(quota) : null, spec ? JSON.stringify(spec) : null);
           codes.push(code);
         }
-        return { projectId: id, quantity, units, codes, ...(quota ? { quota } : {}) };
+        return { projectId: id, quantity, units, codes, ...(quota ? { quota } : {}), ...(spec ? { mediaSpec: spec } : {}) };
       });
     },
 

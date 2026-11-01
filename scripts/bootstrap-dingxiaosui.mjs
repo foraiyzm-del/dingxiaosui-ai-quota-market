@@ -39,7 +39,10 @@ export async function bootstrapDingxiaosui({ baseUrl, adminPassword, workbenchUr
         active: false, fulfillment: 'on_payment', units: 5, priceCents: 330,
         packageOptions: [{ id: 'creative-311', label: '文案 3 次＋图片 1 张＋视频 1 个', quota: { text: 3, image: 1, video: 1 }, priceCents: 330, capabilities: ['text', 'image', 'video'] }],
         quotaPricing: { enabled: true, unitPriceMicros: { text: 100000, image: 1000000, video: 2000000 }, maxCounts: { text: 100, image: 100, video: 100 } },
+        mediaSpec: { video: { seconds: 5, resolution: '480p', audio: false } },
       });
+    } else if (!product.mediaSpec?.video) {
+      await request('/api/admin/products', { ...product, mediaSpec: { video: { seconds: 5, resolution: '480p', audio: false } } });
     }
     const credential = await request('/api/admin/platforms/dingxiaosui/credential', {});
     if (credential.projectId !== 'dingxiaosui' || typeof credential.apiKey !== 'string' || !credential.apiKey) throw new Error('丁小穗接入凭证尚未生成');

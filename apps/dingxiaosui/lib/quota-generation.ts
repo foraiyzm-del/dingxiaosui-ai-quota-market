@@ -3,12 +3,12 @@ import {ApiError,actor} from './tenancy';
 import {quotaAccount,quotaCenterRequest} from './quota-center';
 import {prepareAgricultureText} from './agriculture-policy';
 
-export type QuotaJob={id:string;userId:string;capability:'text'|'image'|'video';status:'queued'|'running'|'succeeded'|'failed'|'uncertain';output?:{text?:string;images?:Array<{url?:string;dataUrl?:string}>;videoUrl?:string;contentAvailable?:boolean}|null;error?:string|null};
+export type QuotaJob={id:string;userId:string;capability:'text'|'image'|'video';status:'queued'|'running'|'succeeded'|'failed'|'uncertain'|'ready';output?:{text?:string;images?:Array<{url?:string;dataUrl?:string}>;videoUrl?:string;contentAvailable?:boolean}|null;error?:string|null};
 export async function currentQuotaAccount(){
  try{return await quotaAccount((await actor()).id);}catch(error){if(error instanceof ApiError&&error.status===401)return null;throw error;}
 }
 export function verifyQuotaJob(job:QuotaJob,userId:string,capability:QuotaJob['capability']){
- if(!job||typeof job.id!=='string'||!/^[-\w]{1,160}$/.test(job.id)||job.userId!==userId||job.capability!==capability||!['queued','running','succeeded','failed','uncertain'].includes(job.status))throw new ApiError(502,'创作中心任务响应待核对，请保留原任务');
+ if(!job||typeof job.id!=='string'||!/^[-\w]{1,160}$/.test(job.id)||job.userId!==userId||job.capability!==capability||!['queued','running','succeeded','failed','uncertain','ready'].includes(job.status))throw new ApiError(502,'创作中心任务响应待核对，请保留原任务');
  return job;
 }
 export async function askQuotaModel(userId:string,instructions:string,input:unknown,outputLimit:number,source:Record<string,unknown>|undefined,rules:{validate?:(output:Record<string,unknown>)=>boolean}={}){
@@ -21,9 +21,17 @@ export async function askQuotaModel(userId:string,instructions:string,input:unkn
   responseFormat:'json_object',maxTokens:outputLimit,
  }),account.centerUserId,'text');
  if(job.status==='failed')throw new ApiError(502,'本次文案生成失败，创作中心已返还预留次数。');
- if(job.status!=='succeeded')throw new ApiError(409,job.status==='uncertain'?'本次文案结果待核对，次数仍预留；请保留原请求，不要新建重复生成。':'本次文案仍在处理中，请稍后用原请求重试，不会重复扣次。');
+ if(job.status!=='succeeded'&&job.status!=='ready')throw new ApiError(409,job.status==='uncertain'?'本次文案结果待核对，次数仍预留；请保留原请求，不要新建重复生成。':'本次文案仍在处理中，请稍后用原请求重试，不会重复扣次。');
  let output:Record<string,unknown>;try{output=JSON.parse(job.output?.text||'');}catch{throw new ApiError(502,'文案已返回，但内容格式待核对；原任务已保留，请联系管理员，不要重新生成。');}
- if(!output||typeof output!=='object'||Array.isArray(output)||!Object.keys(output).length||rules.validate&&!rules.validate(output))throw new ApiError(502,'文案已返回，但内容不完整；请联系管理员核对原任务，不要重复生成。');
+ const usable=!!output&&typeof output==='object'&&!Array.isArray(output)&&!!Object.keys(output).length&&(!rules.validate||rules.validate(output));
+ if(!usable){
+  if(job.status==='ready')await quotaCenterRequest('/generation/'+encodeURIComponent(job.id)+'/delivery',{userId:account.centerUserId,action:'reject',reason:'文案结果缺少可用字段，预留次数退回'});
+  throw new ApiError(502,job.status==='ready'?'文案内容不完整，创作中心已退回预留次数。':'文案已返回，但内容不完整；请联系管理员核对原任务，不要重复生成。');
+ }
+ if(job.status==='ready'){
+  const accepted=verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generation/'+encodeURIComponent(job.id)+'/delivery',{userId:account.centerUserId,action:'accept'}),account.centerUserId,'text');
+  if(accepted.status!=='succeeded')throw new ApiError(502,'文案已生成，但次数结算未完成；请用原请求重试，不会重复生成。');
+ }
  return {output,provider:'创作中心',model:'quota-center'};
 }
 

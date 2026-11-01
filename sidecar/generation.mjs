@@ -6,6 +6,7 @@ import { apimartPayload, normalizeApimartResponse } from './apimart.mjs';
 import { publicAddress, resolveUpstreamAddresses } from './upstream-dns.mjs';
 import { generationOptions, referenceImage, textPayload } from './generation-options.mjs';
 import { imageMime } from './image.mjs';
+import { mediaSpec } from './media-spec.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const now = () => new Date().toISOString();
@@ -91,9 +92,14 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved_note TEXT,
     UNIQUE(project_id,user_id,request_id)
   ); CREATE INDEX IF NOT EXISTS generation_jobs_project ON generation_jobs(project_id,created_at);`);
-  if (!db.prepare('PRAGMA table_info(generation_jobs)').all().some(column => column.name === 'response_format')) {
-    db.exec('ALTER TABLE generation_jobs ADD COLUMN response_format TEXT');
-  }
+  const jobColumns = new Set(db.prepare('PRAGMA table_info(generation_jobs)').all().map(column => column.name));
+  if (!jobColumns.has('response_format')) db.exec('ALTER TABLE generation_jobs ADD COLUMN response_format TEXT');
+  if (!jobColumns.has('request_json')) db.exec('ALTER TABLE generation_jobs ADD COLUMN request_json TEXT');
+  if (!jobColumns.has('upstream_response_json')) db.exec('ALTER TABLE generation_jobs ADD COLUMN upstream_response_json TEXT');
+  if (!jobColumns.has('content_verified')) db.exec('ALTER TABLE generation_jobs ADD COLUMN content_verified INTEGER NOT NULL DEFAULT 0');
+  db.exec(`CREATE TABLE IF NOT EXISTS generation_audit (
+    id INTEGER PRIMARY KEY, job_id TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL
+  ); CREATE INDEX IF NOT EXISTS generation_audit_job ON generation_audit(job_id,id);`);
   const pending = new Set();
   const polling = new Map();
   const fetcher = (url, init, maxBytes) => fetchImpl ? fetchImpl(url, init) : networkRequest(url, init, { allowPrivateUpstreams, maxBytes });
@@ -136,13 +142,32 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     return row;
   }
 
-  // Recover interrupted work without repeating a possibly billable POST.
-  for (let row of db.prepare('SELECT * FROM generation_jobs').all()) {
-    row = reconcile(row);
-    if (row.status === 'queued' || (row.status === 'running' && !row.upstream_id)) {
-      db.prepare('UPDATE generation_jobs SET status=?,error=?,updated_at=? WHERE id=?')
-        .run(row.usage_id ? 'uncertain' : 'failed', row.usage_id ? '服务重启前的调用结果未知，请管理员核对后处理' : '请求在开始调用前中断，可重新提交新的请求', now(), row.id);
+  function audit(jobId, action, detail) {
+    db.prepare('INSERT INTO generation_audit(job_id,action,detail,created_at) VALUES(?,?,?,?)').run(jobId, action, JSON.stringify(detail ?? {}), now());
+  }
+  function rememberUpstream(id, data, secret) {
+    let encoded = JSON.stringify(data);
+    if (secret) encoded = encoded.split(secret).join('').split(encodeURIComponent(secret)).join('');
+    db.prepare('UPDATE generation_jobs SET upstream_response_json=? WHERE id=?').run(encoded, id);
+  }
+  function videoContract(projectId, userId) {
+    if (!db.prepare('PRAGMA table_info(quota_codes)').all().some(column => column.name === 'media_spec_json')) return null;
+    const specs = [];
+    for (const row of db.prepare('SELECT media_spec_json FROM quota_codes WHERE project_id=? AND redeemed_by=? AND media_spec_json IS NOT NULL').all(projectId, userId)) {
+      const spec = mediaSpec(JSON.parse(row.media_spec_json));
+      if (spec?.video) specs.push(spec.video);
     }
+    if (!specs.length && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shop_products'").get()
+      && db.prepare('PRAGMA table_info(shop_products)').all().some(column => column.name === 'media_spec_json')) {
+      for (const row of db.prepare('SELECT media_spec_json FROM shop_products WHERE project_id=? AND media_spec_json IS NOT NULL').all(projectId)) {
+        const spec = mediaSpec(JSON.parse(row.media_spec_json));
+        if (spec?.video) specs.push(spec.video);
+      }
+    }
+    if (!specs.length) return null;
+    const key = item => `${item.seconds}|${item.resolution}|${item.audio}`;
+    if (new Set(specs.map(key)).size > 1) fail(409, '账户里的视频售卖规格不一致，请联系管理员核对后再生成');
+    return specs[0];
   }
 
   function finish(id, status, { output = null, error = null, tokenUsage = null, note = null } = {}) {
@@ -186,10 +211,31 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     if (Buffer.byteLength(raw) > MAX_JSON_BYTES) throw new Error('响应超过限制');
     return JSON.parse(raw);
   }
-  function consume(id, data, apiKey, protocol = 'openai-compatible') {
+  function stageReady(id, output, tokenUsage) {
+    db.prepare(`UPDATE generation_jobs SET status='ready',output_json=?,error=NULL,token_usage_json=?,updated_at=? WHERE id=?`)
+      .run(JSON.stringify(output), tokenUsage ? JSON.stringify(tokenUsage) : null, now(), id);
+    return record(rowById(id));
+  }
+  function releaseReady(id, reason) {
     const row = rowById(id);
+    if (!row || row.status !== 'ready') return row ? record(reconcile(row)) : null;
+    audit(id, 'generation.refunded', { reason });
+    return finish(id, 'failed', { error: reason, note: '结果未能交付，预留次数已自动退回' });
+  }
+  function consume(id, data, apiKey, protocol = 'openai-compatible') {
+    let row = rowById(id);
     if (protocol === 'apimart') data = normalizeApimartResponse(row.capability, data);
     const tokenUsage = usage(data);
+    const incomingId = typeof data?.id === 'string' && /^[A-Za-z0-9._:-]{1,200}$/u.test(data.id) ? data.id : null;
+    if (row.upstream_id && incomingId && incomingId !== row.upstream_id) {
+      audit(id, 'generation.task_mismatch', { expected: row.upstream_id, received: incomingId });
+      return uncertain(id, '上游返回的任务标识与原任务不一致，未结算，已标记待人工核对');
+    }
+    if (!row.upstream_id && incomingId) {
+      db.prepare('UPDATE generation_jobs SET upstream_id=? WHERE id=?').run(incomingId, id);
+      row = rowById(id);
+    }
+    const upstreamId = row.upstream_id;
     if (row.capability === 'text') {
       const content = data?.choices?.[0]?.message?.content;
       const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map(part => part.type === 'text' ? part.text : '').join('') : '';
@@ -199,11 +245,12 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
           const value = JSON.parse(text);
           if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length) throw new Error('invalid object');
         } catch { return finish(id, 'failed', { error: '上游未返回有效的 JSON 对象，预留次数已退回' }); }
+        // The caller must accept a usable object. A syntactically valid JSON
+        // document is not itself a delivered answer.
+        return stageReady(id, { text }, tokenUsage);
       }
       return finish(id, 'succeeded', { output: { text }, tokenUsage });
     }
-    const upstreamId = typeof data?.id === 'string' && /^[A-Za-z0-9._:-]{1,200}$/u.test(data.id) ? data.id : row.upstream_id;
-    if (upstreamId) db.prepare('UPDATE generation_jobs SET upstream_id=? WHERE id=?').run(upstreamId, id);
     if (['failed', 'cancelled', 'canceled'].includes(data?.status)) return finish(id, 'failed', { error: '上游生成任务失败，预留次数已退回' });
     if (row.capability === 'image') {
       const images = (Array.isArray(data?.data) ? data.data : []).slice(0, 1).map(item => {
@@ -222,12 +269,13 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         return record(rowById(id));
       }
       if (!images.length) return uncertain(id, '上游未返回可识别的图片结果，请核对接口协议');
-      return finish(id, 'succeeded', { output: { images }, tokenUsage });
+      if (images.every(item => item.dataUrl)) return finish(id, 'succeeded', { output: { images }, tokenUsage });
+      return stageReady(id, { images }, tokenUsage);
     }
     const videoUrl = safeAssetUrl(data?.url || data?.video_url || data?.output?.url, apiKey);
     if (['completed', 'succeeded'].includes(data?.status) || videoUrl) {
       if (!videoUrl && (!upstreamId || protocol === 'apimart')) return uncertain(id, '上游视频结果缺少下载信息，请管理员核对');
-      return finish(id, 'succeeded', { output: { ...(videoUrl ? { videoUrl } : {}), contentAvailable: Boolean(upstreamId) }, tokenUsage });
+      return stageReady(id, { ...(videoUrl ? { videoUrl } : {}), contentAvailable: Boolean(upstreamId) }, tokenUsage);
     }
     if (upstreamId && ['queued', 'in_progress', 'processing', 'running', 'pending'].includes(data?.status)) {
       db.prepare("UPDATE generation_jobs SET status='running',error=NULL,updated_at=? WHERE id=?").run(now(), id);
@@ -269,21 +317,40 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       if (!platform.enabled) fail(409, '该平台已停用');
       const binding = platform.bindings.find(item => item.capability === fields.capability);
       if (!binding) fail(409, '该平台尚未配置此能力的 API 渠道');
+      const contract = fields.capability === 'video' ? videoContract(fields.projectId, fields.userId) : null;
       const config = channels.getForExecution(binding);
       if (fields.referenceImage && config.protocol !== 'apimart') fail(400, '该渠道尚未配置参考图上传协议，请使用支持图生图的 APIMart 渠道');
       const id = randomUUID();
       const timestamp = now();
-      transaction(() => {
-        db.prepare(`INSERT INTO generation_jobs(id,project_id,user_id,request_id,request_hash,capability,channel_id,model,units,status,pricing_json,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,'queued',?,?,?)`).run(id, fields.projectId, fields.userId, fields.requestId, fingerprint, fields.capability,
-          binding.channelId, binding.model, platform.unitsPerUse, config.model.pricing ? JSON.stringify(config.model.pricing) : null, timestamp, timestamp);
-        const reservation = quota.reserve({ projectId: fields.projectId, userId: fields.userId, requestId: `generation:${id}`, units: platform.unitsPerUse, capability: fields.capability });
-        db.prepare("UPDATE generation_jobs SET usage_id=?,status='running',updated_at=? WHERE id=?").run(reservation.usage.id, now(), id);
-        if (fields.responseFormat) db.prepare('UPDATE generation_jobs SET response_format=? WHERE id=?').run(fields.responseFormat, id);
-      });
+      const snapshot = { capability: fields.capability, prompt: fields.prompt, size: fields.size ?? null, seconds: fields.seconds ?? null,
+        aspectRatio: fields.aspectRatio ?? null, responseFormat: fields.responseFormat ?? null, maxTokens: fields.maxTokens ?? null,
+        hasReferenceImage: Boolean(fields.referenceImage), ...(contract ? { videoSpec: contract } : {}) };
+      try {
+        transaction(() => {
+          db.prepare(`INSERT INTO generation_jobs(id,project_id,user_id,request_id,request_hash,capability,channel_id,model,units,status,pricing_json,request_json,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,'queued',?,?,?,?)`).run(id, fields.projectId, fields.userId, fields.requestId, fingerprint, fields.capability,
+            binding.channelId, binding.model, platform.unitsPerUse, config.model.pricing ? JSON.stringify(config.model.pricing) : null, JSON.stringify(snapshot), timestamp, timestamp);
+          const reservation = quota.reserve({ projectId: fields.projectId, userId: fields.userId, requestId: `generation:${id}`, units: platform.unitsPerUse, capability: fields.capability });
+          db.prepare("UPDATE generation_jobs SET usage_id=?,status='running',updated_at=? WHERE id=?").run(reservation.usage.id, now(), id);
+          if (fields.responseFormat) db.prepare('UPDATE generation_jobs SET response_format=? WHERE id=?').run(fields.responseFormat, id);
+        });
+      } catch (error) {
+        const winner = db.prepare('SELECT * FROM generation_jobs WHERE project_id=? AND user_id=? AND request_id=?').get(fields.projectId, fields.userId, fields.requestId);
+        if (!winner) throw error;
+        if (winner.request_hash !== fingerprint) fail(409, '同一请求标识不能用于不同内容，请使用新的请求标识');
+        return record(reconcile(winner));
+      }
       const payload = config.protocol === 'apimart' ? apimartPayload(fields, binding.model) : fields.capability === 'text' ? textPayload(fields, binding.model)
         : { model: binding.model, prompt: fields.prompt, ...(fields.capability === 'image' ? { n: 1 } : {}),
           ...(fields.size ? { size: fields.size } : {}), ...(fields.capability === 'video' && fields.seconds ? { seconds: fields.seconds } : {}) };
+      if (contract) {
+        if (config.protocol === 'apimart') {
+          payload.duration = contract.seconds;
+          payload.resolution = contract.resolution;
+          payload.generate_audio = contract.audio;
+        } else payload.seconds = String(contract.seconds);
+        if (fields.seconds && Number(fields.seconds) !== contract.seconds) audit(id, 'generation.spec_clipped', { requestedSeconds: fields.seconds, applied: contract });
+      }
       const headers = { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': id };
       pending.add(id);
       let generationSubmitted = false;
@@ -311,7 +378,9 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
           if (response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status)) return finish(id, 'failed', { error: `上游拒绝请求（HTTP ${response.status}），预留次数已退回` });
           return uncertain(id, `上游返回 HTTP ${response.status}，结果未知，次数暂时预留`);
         }
-        return consume(id, await readJson(response), config.apiKey, config.protocol);
+        const data = await readJson(response);
+        rememberUpstream(id, data, config.apiKey);
+        return consume(id, data, config.apiKey, config.protocol);
       } catch (error) {
         if (!generationSubmitted) return finish(id, 'failed', { error: '参考图准备失败，尚未开始生成，预留次数已退回' });
         if (error.safeRejection) return finish(id, 'failed', { error: error.message });
@@ -331,7 +400,9 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         const config = channels.getForExecution({ channelId: row.channel_id, capability: row.capability, model: row.model });
         const response = await fetcher(endpoint(config, 'videoStatus', row.upstream_id), { method: 'GET', headers: { Authorization: `Bearer ${config.apiKey}` }, redirect: 'manual', signal: AbortSignal.timeout(Math.min(config.timeoutMs, 30000)) });
         if (!response.ok) return record(row);
-        return consume(id, await readJson(response), config.apiKey, config.protocol);
+        const data = await readJson(response);
+        rememberUpstream(id, data, config.apiKey);
+        return consume(id, data, config.apiKey, config.protocol);
       } catch { return record(row); }
       finally { pending.delete(id); }
     },
@@ -350,8 +421,9 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     async getContent({ projectId, userId, id, index = 0 } = {}) {
       const row = rowById(validText(id, '任务标识', 64));
       if (!row || row.project_id !== projectId || (userId !== undefined && row.user_id !== userId)) fail(404, '任务不存在');
-      if (!['image', 'video'].includes(row.capability) || row.status !== 'succeeded') fail(409, '媒体尚未完成或没有可下载内容');
+      if (!['image', 'video'].includes(row.capability) || !['succeeded', 'ready'].includes(row.status)) fail(409, '媒体尚未完成或没有可下载内容');
       const config = channels.getForExecution({ channelId: row.channel_id, capability: row.capability, model: row.model });
+      const unusable = (reason, refundReason = reason) => { if (row.status === 'ready') releaseReady(row.id, refundReason); fail(502, row.status === 'ready' ? refundReason : reason); };
       if (row.capability === 'image') {
         if (!/^[0-9]+$/u.test(String(index)) || Number(index) !== 0) fail(400, '图片序号无效');
         const item = parse(row.output_json)?.images?.[Number(index)];
@@ -359,36 +431,76 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         let body;
         if (item.dataUrl) {
           const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/u.exec(item.dataUrl);
-          if (!match) fail(502, '图片内容格式无效');
+          if (!match) unusable('图片内容格式无效', '图片内容格式无效，预留次数已退回');
           body = Buffer.from(match[1], 'base64');
         } else {
           const url = safeAssetUrl(item.url, config.apiKey);
-          if (!url) fail(502, '上游图片下载地址无效');
+          if (!url) unusable('上游图片下载地址无效', '上游图片下载地址无效，预留次数已退回');
+          let response;
           try {
-            const response = await fetcher(url, { method: 'GET', headers: {}, redirect: 'manual', signal: AbortSignal.timeout(config.timeoutMs) }, MAX_JSON_BYTES);
-            if (!response.ok) fail(502, '上游图片暂时无法下载');
-            body = Buffer.from(await response.arrayBuffer());
+            response = await fetcher(url, { method: 'GET', headers: {}, redirect: 'manual', signal: AbortSignal.timeout(config.timeoutMs) }, MAX_JSON_BYTES);
           } catch { fail(502, '上游图片下载失败'); }
+          if (!response.ok) {
+            if (response.status === 404 || response.status === 410) unusable('上游图片暂时无法下载', '上游图片不存在或已失效，预留次数已退回');
+            fail(502, '上游图片暂时无法下载');
+          }
+          body = Buffer.from(await response.arrayBuffer());
         }
-        if (body.length > MAX_JSON_BYTES) fail(502, '图片超过下载大小限制');
+        if (body.length > MAX_JSON_BYTES) unusable('图片超过下载大小限制', '图片超过下载大小限制，预留次数已退回');
         let contentType;
-        try { contentType = imageMime(body); } catch { fail(502, '上游图片文件不完整或格式无效'); }
+        try { contentType = imageMime(body); } catch { unusable('上游图片文件不完整或格式无效', '上游图片文件不完整或格式无效，预留次数已退回'); }
+        if (row.status === 'ready') db.prepare('UPDATE generation_jobs SET content_verified=1,updated_at=? WHERE id=?').run(now(), row.id);
         return { body, contentType };
       }
       if (!row.upstream_id) fail(409, '视频没有可下载内容');
       let response;
       const assetUrl = config.protocol === 'apimart' ? safeAssetUrl(parse(row.output_json)?.videoUrl, config.apiKey) : null;
-      if (config.protocol === 'apimart' && !assetUrl) fail(502, '上游视频下载地址无效');
+      if (config.protocol === 'apimart' && !assetUrl) unusable('上游视频下载地址无效', '上游视频下载地址无效，预留次数已退回');
       // A generated asset is on a separate host. Never forward the API credential to it.
       try { response = await fetcher(assetUrl || endpoint(config, 'videoContent', row.upstream_id), { method: 'GET', headers: assetUrl ? {} : { Authorization: `Bearer ${config.apiKey}` }, redirect: 'manual', signal: AbortSignal.timeout(config.timeoutMs) }, MAX_VIDEO_BYTES); }
       catch { fail(502, '上游视频下载失败'); }
-      if (!response.ok) fail(502, '上游视频暂时无法下载');
+      if (!response.ok) {
+        if (response.status === 404 || response.status === 410) unusable('上游视频暂时无法下载', '上游视频不存在或已失效，预留次数已退回');
+        fail(502, '上游视频暂时无法下载');
+      }
       const contentType = response.headers.get('content-type')?.split(';')[0];
-      if (!['video/mp4', 'video/webm', 'application/octet-stream'].includes(contentType)) fail(502, '上游返回的视频格式无效');
-      if (Number(response.headers.get('content-length')) > MAX_VIDEO_BYTES) fail(502, '视频超过下载大小限制');
+      if (!['video/mp4', 'video/webm', 'application/octet-stream'].includes(contentType)) unusable('上游返回的视频格式无效', '上游返回的视频格式无效，预留次数已退回');
+      if (Number(response.headers.get('content-length')) > MAX_VIDEO_BYTES) unusable('视频超过下载大小限制', '视频超过下载大小限制，预留次数已退回');
       const body = Buffer.from(await response.arrayBuffer());
-      if (body.length > MAX_VIDEO_BYTES) fail(502, '视频超过下载大小限制');
+      if (body.length > MAX_VIDEO_BYTES) unusable('视频超过下载大小限制', '视频超过下载大小限制，预留次数已退回');
+      if (row.status === 'ready') db.prepare('UPDATE generation_jobs SET content_verified=1,updated_at=? WHERE id=?').run(now(), row.id);
       return { body, contentType: contentType === 'application/octet-stream' ? 'video/mp4' : contentType };
+    },
+
+    async acceptDelivery({ projectId, userId, id } = {}) {
+      let row = rowById(validText(id, '任务标识', 64));
+      if (!row || row.project_id !== projectId || (userId !== undefined && row.user_id !== userId)) fail(404, '任务不存在');
+      row = reconcile(row);
+      if (row.status === 'succeeded') return record(row);
+      if (row.status !== 'ready') fail(409, '结果尚未交付，不能确认扣次');
+      if (['image', 'video'].includes(row.capability) && !row.content_verified) {
+        try { await api.getContent({ projectId, userId, id }); }
+        catch (error) {
+          const current = rowById(id);
+          if (current?.status === 'failed') return record(current);
+          throw error;
+        }
+        row = rowById(id);
+        if (row.status !== 'ready') return record(row);
+      }
+      audit(id, 'generation.delivered', { capability: row.capability });
+      return finish(id, 'succeeded', { output: parse(row.output_json), tokenUsage: parse(row.token_usage_json), note: '调用方确认已拿到可用结果，结算扣次' });
+    },
+
+    rejectDelivery({ projectId, userId, id, reason } = {}) {
+      let row = rowById(validText(id, '任务标识', 64));
+      if (!row || row.project_id !== projectId || (userId !== undefined && row.user_id !== userId)) fail(404, '任务不存在');
+      row = reconcile(row);
+      if (row.status === 'failed') return record(row);
+      if (row.status !== 'ready') fail(409, '只有尚未确认交付的结果可以退回次数');
+      const detail = typeof reason === 'string' && reason.trim() ? validText(reason, '退回原因', 1000) : '结果不可用，预留次数已退回';
+      audit(id, 'generation.refunded', { reason: detail });
+      return finish(id, 'failed', { error: detail, note: '结果未交付，预留次数已自动退回' });
     },
 
     resolveJob({ id, action, note } = {}) {
@@ -397,7 +509,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       if (!['commit', 'cancel'].includes(action)) fail(400, '请选择确认扣次或退回次数');
       note = validText(note, '处理说明', 1000);
       if (pending.has(id)) fail(409, '请求正在执行，请稍后核对处理');
-      if (!['uncertain', 'running'].includes(row.status)) {
+      if (!['uncertain', 'running', 'ready'].includes(row.status)) {
         if ((row.status === 'succeeded' && action === 'commit') || (row.status === 'failed' && action === 'cancel')) return record(reconcile(row));
         fail(409, '任务已经结算，不能改变处理结果');
       }
@@ -411,9 +523,28 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     stats() {
       return { ...db.prepare(`SELECT COUNT(*) AS jobCount, COALESCE(SUM(status='succeeded'),0) AS succeededCount,
         COALESCE(SUM(status='failed'),0) AS failedCount, COALESCE(SUM(status='running'),0) AS runningCount,
-        COALESCE(SUM(status='uncertain'),0) AS uncertainCount, COALESCE(SUM(estimated_cost_cents),0) AS estimatedCostCents,
+        COALESCE(SUM(status='uncertain'),0) AS uncertainCount, COALESCE(SUM(status='ready'),0) AS readyCount,
+        COALESCE(SUM(estimated_cost_cents),0) AS estimatedCostCents,
         COALESCE(SUM(status='succeeded' AND estimated_cost_cents IS NULL),0) AS unpricedSuccessCount FROM generation_jobs`).get(), costIsEstimate: true };
     },
   };
+  // Replay a stored upstream body after a crash. Never repeat the POST.
+  for (let row of db.prepare('SELECT * FROM generation_jobs').all()) {
+    row = reconcile(row);
+    if (row.upstream_response_json && row.status === 'running') {
+      try {
+        const config = channels.getForExecution({ channelId: row.channel_id, capability: row.capability, model: row.model });
+        consume(row.id, JSON.parse(row.upstream_response_json), config.apiKey, config.protocol);
+      } catch {
+        db.prepare("UPDATE generation_jobs SET status='uncertain',error=?,updated_at=? WHERE id=? AND status='running'")
+          .run('已保存的上游响应无法完成结算，请管理员核对', now(), row.id);
+      }
+      continue;
+    }
+    if (row.status === 'queued' || (row.status === 'running' && !row.upstream_id)) {
+      db.prepare('UPDATE generation_jobs SET status=?,error=?,updated_at=? WHERE id=?')
+        .run(row.usage_id ? 'uncertain' : 'failed', row.usage_id ? '服务重启前的调用结果未知，请管理员核对后处理' : '请求在开始调用前中断，可重新提交新的请求', now(), row.id);
+    }
+  }
   return api;
 }

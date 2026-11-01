@@ -36,12 +36,13 @@ let mode='normal',finishMedia=false,contentFails=false,createCount=0;
 const png=Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,0]),mp4=Uint8Array.from([0,0,0,20,102,116,121,112,105,115,111,109]);
 globalThis.fetch=async(url,init={})=>{
  const target=new URL(url);assert.equal(target.origin,'https://center.fixture');assert.equal(init.headers.Authorization,'Bearer isolated-platform-key');requests.push(target.pathname);
+ if(target.pathname.endsWith('/delivery')){const body=JSON.parse(init.body);posts.push(body);return Response.json({id:'job-delivery',userId:body.userId,capability:'text',status:body.action==='accept'?'succeeded':'failed',output:{text:'{"answer":"已确认"}'}});}
  if(target.pathname==='/api/v1/generate'){
   const body=JSON.parse(init.body),key=body.userId+'|'+body.requestId;posts.push(body);
   if(jobs.has(key)){const entry=jobs.get(key);if(entry.hash!==JSON.stringify(body))return Response.json({error:'changed request'},{status:409});return Response.json(entry.job);}
   if(limits[body.capability]<=0)return Response.json({error:body.capability+'次数不足'},{status:402});
   limits[body.capability]--;createCount++;
-  const job={id:'job-'+createCount,userId:body.userId,capability:body.capability,status:body.capability==='text'?'succeeded':mode==='uncertain'?'uncertain':'running',output:body.capability==='text'?{text:'{"answer":"山西小米品牌文案","title":"小米"}'}:null};
+  const job={id:'job-'+createCount,userId:body.userId,capability:body.capability,status:mode==='incomplete'?'ready':body.capability==='text'?'succeeded':mode==='uncertain'?'uncertain':'running',output:body.capability==='text'?{text:mode==='incomplete'?'{"title":"只有标题"}':'{"answer":"山西小米品牌文案","title":"小米"}'}:null};
   jobs.set(key,{hash:JSON.stringify(body),job});
   if(mode==='lost-response')throw Error('controlled connection lost after center accepted');
   return Response.json(job);
@@ -76,6 +77,12 @@ await check('async image has one durable center request, own asset, and no secon
  const row=database.prepare('SELECT * FROM media_jobs WHERE id=?').get(imageJob.id);assert.equal(row.provider_kind,'quota-center');assert.equal(row.key_cipher,'');assert.equal(row.upstream_id,'job-'+createCount);assert.equal(posts.at(-1).aspectRatio,'3:4');assert(posts.at(-1).prompt.includes('更懂山西农产品'));
  finishMedia=true;unlock(imageJob.id);imageJob=await media.pollMediaJob('a',imageJob.id);assert.equal(imageJob.status,'succeeded');assert.equal(imageJob.outputs[0].persisted,true);assert.deepEqual(new Uint8Array(await (await media.mediaAsset('a',imageJob.id,0)).arrayBuffer()),png);assert.equal(createCount,before+1);
  await assert.rejects(()=>media.pollMediaJob('b',imageJob.id),e=>e.status===404);await assert.rejects(()=>media.mediaAsset('b',imageJob.id,0),e=>e.status===404);
+});
+await check('quota video requests longer than five seconds are clipped to the sold card',async()=>{
+ const before=posts.length;await media.createMediaJob(who('b'),request({capability:'video',duration:15,ratio:'9:16'}));assert.equal(posts[before].seconds,5);assert.equal(posts[before].capability,'video');
+});
+await check('JSON without an answer is rejected to the center and not returned as copy',async()=>{
+ limits.text+=1;mode='incomplete';const before=posts.length;await assert.rejects(()=>ai.askModel('写文案',{item:'缺回答'},300,{requestId:randomUUID()},{validate:output=>typeof output.answer==='string'&&!!output.answer.trim()}),error=>error.status===502);assert.equal(posts.at(-1).action,'reject');assert.ok(posts.length>before);mode='normal';
 });
 await check('video follows async flow, preserves requested five seconds and persists MP4',async()=>{
  const created=(await media.createMediaJob(who('a'),request({capability:'video',duration:5,ratio:'16:9'}))).job;assert.equal(posts.at(-1).seconds,5);unlock(created.id);const done=await media.pollMediaJob('a',created.id);assert.equal(done.status,'succeeded');assert.deepEqual(new Uint8Array(await (await media.mediaAsset('a',done.id,0)).arrayBuffer()),mp4);

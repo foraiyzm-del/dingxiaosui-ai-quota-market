@@ -15,6 +15,7 @@ export function createUsageClient({ baseUrl, apiKey, fetchImpl = fetch, timeoutM
     balance: userId => request(`/balance?userId=${encodeURIComponent(userId)}`, { method: 'GET' }),
     generate: ({ userId, requestId, capability, prompt, size, seconds, messages, responseFormat, maxTokens, aspectRatio, referenceImage }) => request('/generate', { data: { userId, requestId, capability, prompt, size, seconds, messages, responseFormat, maxTokens, aspectRatio, referenceImage } }),
     job: ({ id, userId }) => request(`/generation/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, { method: 'GET' }),
+    deliver: ({ id, userId, action, reason }) => request(`/generation/${encodeURIComponent(id)}/delivery`, { data: { userId, action, reason } }),
     reserve: ({ userId, requestId, units = 1, capability }) => request('/usage/reserve', { data: { userId, requestId, units, capability } }),
     commit: usageId => request(`/usage/${encodeURIComponent(usageId)}/commit`, { data: {} }),
     cancel: usageId => request(`/usage/${encodeURIComponent(usageId)}/cancel`, { data: {} }),
