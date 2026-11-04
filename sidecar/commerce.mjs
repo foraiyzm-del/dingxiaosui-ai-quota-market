@@ -545,10 +545,16 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
 
     expireOrders,
 
-    generateInventory({ productId, packageId, units, quantity, delivery = 'stock' } = {}) {
+    generateInventory({ productId, packageId, units, quantity, delivery = 'stock', validDays } = {}) {
       productId = identifier(productId, '商品ID');
       quantity = positiveInteger(quantity, '制卡张数', 1000);
-      if (!['stock', 'direct'].includes(delivery)) fail(400, '请选择待售库存或员工直接发码');
+      if (!['stock', 'direct', 'gift'].includes(delivery)) fail(400, '请选择待售库存、员工直接发码或已发放实体卡');
+      let expiresAt = null;
+      if (validDays !== undefined && validDays !== null && validDays !== '') {
+        const days = Number(validDays);
+        if (!Number.isInteger(days) || days < 1 || days > 3650) fail(400, '有效期须为 1 至 3650 天');
+        expiresAt = new Date(Date.now() + days * 86400000).toISOString();
+      }
       if (packageId !== undefined && units !== undefined) fail(400, '固定套餐与自定义每卡次数不能同时指定');
       return transaction(() => {
         const row = db.prepare('SELECT * FROM shop_products WHERE id=?').get(productId);
@@ -571,16 +577,21 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
         }
         if (allocation && platforms) allocationRouting(projectId, allocation);
         if (delivery === 'direct') {
-          return { ...quota.generateCodes({ projectId, units, quantity, quota: allocation, mediaSpec: product.mediaSpec }),
+          return { ...quota.generateCodes({ projectId, units, quantity, quota: allocation, mediaSpec: product.mediaSpec, expiresAt }),
             productName: product.name, packageLabel: label };
         }
-        return inventory.generate({ productId, projectId, skuId, productName: product.name, packageLabel: label, units, quantity, quota: allocation, mediaSpec: product.mediaSpec });
+        return inventory.generate({ productId, projectId, skuId, productName: product.name, packageLabel: label, units, quantity, quota: allocation, mediaSpec: product.mediaSpec, expiresAt, gift: delivery === 'gift' });
       });
     },
 
     listInventory() { expireOrders(); return inventory.list(); },
     listBatches() { expireOrders(); return inventory.listBatches(); },
     exportBatch({ batchId } = {}) { return inventory.exportBatch({ batchId: identifier(batchId, '批次ID') }); },
+    exportCsv(args = {}) { return inventory.exportCsv({ ...args, batchId: identifier(args.batchId, '批次ID') }); },
+    exportQrZip(args = {}) { return inventory.exportQrZip({ ...args, batchId: identifier(args.batchId, '批次ID') }); },
+    revokeInventoryCard(args = {}) { return inventory.revokeCard(args); },
+    revokeInventoryBatch({ batchId } = {}) { return inventory.revokeBatch({ batchId: identifier(batchId, '批次ID') }); },
+    lookupCard(args = {}) { return inventory.lookup(args); },
 
     listOrders() {
       expireOrders();

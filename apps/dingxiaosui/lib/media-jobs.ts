@@ -14,7 +14,8 @@ type JobRow=MediaJobRow;
 // Only server code may supply this argument. Never spread request JSON into it.
 export type TrustedMediaOptions={imageProfile?:ApimartImageProfile};
 const vars=()=>env as unknown as Record<string,string|undefined>;
-export function publicJob(row:JobRow){let outputs:Output[]=[];try{outputs=JSON.parse(row.outputs_json)}catch{}return {id:row.id,capability:row.capability,status:row.status,prompt:row.prompt,modelName:row.model_name,providerModel:row.provider_model,createdAt:row.created_at,updatedAt:row.updated_at,outputs:outputs.filter(o=>row.status!=='saving'||o.persisted).map(({url,persisted,expiresAt,expiresAtSource})=>({url,persisted,...(expiresAtSource==='provider'&&expiresAt&&Number.isFinite(Date.parse(expiresAt))?{expiresAt,expiresAtSource}:{})})),error:row.error};}
+function waitingHint(row:JobRow){if(!['queued','running','saving','submitting'].includes(row.status))return undefined;const elapsed=Date.now()-Date.parse(row.created_at);if(row.capability==='video'){const minutes=Math.max(1,Math.ceil(elapsed/60000));return `视频正在生成，已等待约 ${minutes} 分钟。普通视频大约 1–3 分钟，领导卡的高清视频大约 2–8 分钟，都属正常。成功保存后才扣次数，失败会自动退回。`;}if(row.capability==='image')return '图片正在生成，一般几十秒。成功保存后才扣次数，失败会自动退回。';return undefined;}
+export function publicJob(row:JobRow){let outputs:Output[]=[];try{outputs=JSON.parse(row.outputs_json)}catch{}const hint=waitingHint(row);return {id:row.id,capability:row.capability,status:row.status,prompt:row.prompt,modelName:row.model_name,providerModel:row.provider_model,createdAt:row.created_at,updatedAt:row.updated_at,outputs:outputs.filter(o=>row.status!=='saving'||o.persisted).map(({url,persisted,expiresAt,expiresAtSource})=>({url,persisted,...(expiresAtSource==='provider'&&expiresAt&&Number.isFinite(Date.parse(expiresAt))?{expiresAt,expiresAtSource}:{})})),error:row.error,...(hint?{hint}:{})};}
 export async function ownedMediaJob(userId:string,id:string){const row=await db().prepare('SELECT * FROM media_jobs WHERE id=? AND user_id=?').bind(id,userId).first<JobRow>();if(!row)throw new ApiError(404,'任务不存在或不可访问');return row;}
 async function settleMediaEventCredit(row:JobRow){
  if(row.provider_kind==='quota-center')return;
@@ -183,11 +184,11 @@ async function createQuotaMediaJob(user:Actor,options:CreateOptions,key:string,h
  if(options.modelId)throw new ApiError(400,'此激活码使用已开通的创作服务，请选择平台模型');
  const id=crypto.randomUUID(),now=new Date().toISOString(),payload={userId:account.centerUserId,requestId:'media:'+id,capability:options.capability,prompt:agricultureMediaPrompt(options.prompt,options.capability),aspectRatio:options.ratio,...(options.size?{size:options.size}:{}),...(options.capability==='video'?{seconds:5}:{}),...(options.referenceImage?{referenceImage:options.referenceImage}:{})};
  const cipher=await encryptQuotaPayload(payload);
- try{await db().prepare("INSERT INTO media_jobs(id,user_id,capability,idempotency_key,request_hash,prompt,model_name,provider_kind,provider_endpoint,provider_model,key_cipher,status,created_at,updated_at,poll_after) VALUES (?,?,?,?,?,?,?,'quota-center','','quota-center',?,'queued',?,?,?)").bind(id,user.id,options.capability,key,hash,options.prompt,options.capability==='image'?'图片生成':'视频生成',cipher,now,now,Date.now()+150000).run();}
+ try{await db().prepare("INSERT INTO media_jobs(id,user_id,capability,idempotency_key,request_hash,prompt,model_name,provider_kind,provider_endpoint,provider_model,key_cipher,status,created_at,updated_at,poll_after) VALUES (?,?,?,?,?,?,?,'quota-center','','quota-center',?,'queued',?,?,?)").bind(id,user.id,options.capability,key,hash,options.prompt,options.capability==='image'?'图片生成':'视频生成',cipher,now,now,Date.now()+20000).run();}
  catch(error){const concurrent=await db().prepare('SELECT * FROM media_jobs WHERE user_id=? AND idempotency_key=?').bind(user.id,key).first<JobRow>();if(!concurrent)throw error;if(concurrent.request_hash!==hash)throw new ApiError(409,'该任务标识已对应另一份内容');return {job:publicJob(concurrent),created:false};}
  const row=await ownedMediaJob(user.id,id);
  try{
-  const result=verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generate',payload),account.centerUserId,row.capability);
+  const result=verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generate',payload,{timeoutMs:options.capability==='video'?180000:130000}),account.centerUserId,row.capability);
   await acceptQuotaResult(row,result);
  }catch(error){
   const current=await ownedMediaJob(user.id,id);

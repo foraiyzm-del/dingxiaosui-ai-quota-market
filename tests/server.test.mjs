@@ -328,7 +328,7 @@ test('claim issues one three-unit demo code per browser and supports the full re
   assert.equal(claimed.status, 201, claimed.text);
   assert.equal(claimed.data.units, 3);
   assert.equal(claimed.data.scope, 'local-demo');
-  assert.match(claimed.data.code, /^QTA-[0-9A-F]{36}$/u);
+  assert.match(claimed.data.code, /^QTA(?:-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){4}$/u);
   const cookie = claimed.headers['set-cookie'][0].split(';')[0];
   const claimedAgain = await request('/api/demo/claim', { method: 'POST', headers: { cookie }, json: {} });
   assert.equal(claimedAgain.status, 409, claimedAgain.text);
@@ -488,7 +488,7 @@ test('isolated shop simulation completes order, manual approval, one-code delive
   assert.equal(delivered.status, 200, delivered.text);
   assert.equal(delivered.data.status, 'fulfilled');
   const code = delivered.data.code;
-  assert.match(code, /^QTA-[0-9A-F]{36}$/u);
+  assert.match(code, /^QTA(?:-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){4}$/u);
   assert.equal(center.quota.stats().codeCount, codeCountBefore);
   assert.equal((await request(`/api/admin/shop-orders/${order.id}/approve`, approval)).status, 200);
   assert.equal((await request(orderPath)).data.code, code);
