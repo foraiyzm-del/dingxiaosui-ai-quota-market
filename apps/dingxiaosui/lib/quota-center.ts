@@ -46,7 +46,7 @@ export async function quotaCenterRequest<T=unknown>(path:string,body?:unknown,op
  try{return await response.json() as T;}catch{throw new ApiError(503,'发卡服务返回结果不完整，请保留原请求稍后核对');}
 }
 export async function quotaCenterContent(path:string):Promise<Response>{
- const response=await request(path,undefined,130000);if(!response.ok)return failure(response);return response;
+ return request(path,undefined,130000);
 }
 export async function quotaAccount(userId:string):Promise<QuotaAccount|null>{
  const row=await db().prepare("SELECT q.user_id,q.center_user_id,q.code_id FROM quota_center_accounts q JOIN users u ON u.id=q.user_id AND u.status='active' WHERE q.user_id=? AND q.status='active'").bind(userId).first<{user_id:string;center_user_id:string;code_id:string}>();
