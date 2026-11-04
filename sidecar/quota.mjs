@@ -1,7 +1,8 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { CAPABILITIES, normalizeQuota, quotaTotal, readQuota } from './quota-values.mjs';
 import { mediaSpec } from './media-spec.mjs';
 import { createChannelBudgets } from './channel-budgets.mjs';
+import { activationCodeDigests, activationCodeDigest, mintActivationCode } from './activation-codes.mjs';
 
 const MAX_UNITS = 1_000_000;
 const MAX_CODES = 1_000;
@@ -26,7 +27,7 @@ function positiveInteger(value, field, maximum = MAX_UNITS) {
 }
 
 function hashCode(value) {
-  return createHash('sha256').update(value).digest('hex');
+  return activationCodeDigest(value);
 }
 
 /**
@@ -50,7 +51,7 @@ function hashCode(value) {
  * caller's transaction (for example, inventory issuance and fulfilment).
  */
 export function createQuota(db) {
-  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 15000;');
   const channelBudgets = createChannelBudgets(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS quota_projects (
@@ -107,6 +108,10 @@ export function createQuota(db) {
     const codes = new Set(db.prepare('PRAGMA table_info(quota_codes)').all().map(column => column.name));
     if (!codes.has('quota_json')) db.exec('ALTER TABLE quota_codes ADD COLUMN quota_json TEXT');
     if (!codes.has('media_spec_json')) db.exec('ALTER TABLE quota_codes ADD COLUMN media_spec_json TEXT');
+    if (!codes.has('expires_at')) db.exec('ALTER TABLE quota_codes ADD COLUMN expires_at TEXT');
+    if (!codes.has('card_number')) db.exec('ALTER TABLE quota_codes ADD COLUMN card_number TEXT');
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS quota_codes_card_number ON quota_codes(card_number) WHERE card_number IS NOT NULL');
+    db.exec('CREATE TABLE IF NOT EXISTS card_serial (id INTEGER PRIMARY KEY CHECK (id = 1), next INTEGER NOT NULL)');
     const usages = new Set(db.prepare('PRAGMA table_info(quota_usage)').all().map(column => column.name));
     if (!usages.has('capability')) db.exec('ALTER TABLE quota_usage ADD COLUMN capability TEXT');
     if (!usages.has('allocations_json')) db.exec('ALTER TABLE quota_usage ADD COLUMN allocations_json TEXT');
@@ -207,26 +212,38 @@ export function createQuota(db) {
       });
     },
 
-    generateCodes({ projectId: id, quantity, units, quota: requestedQuota, redeemable = true, mediaSpec: requestedSpec } = {}) {
+    generateCodes({ projectId: id, quantity, units, quota: requestedQuota, redeemable = true, mediaSpec: requestedSpec, expiresAt = null, numbered = false } = {}) {
       id = projectId(id);
       quantity = positiveInteger(quantity, 'quantity', MAX_CODES);
       const quota = normalizeQuota(requestedQuota);
       units = quota ? quotaTotal(quota) : positiveInteger(units, 'units');
       if (typeof redeemable !== 'boolean') fail(400, 'redeemable must be a boolean');
+      if (typeof numbered !== 'boolean') fail(400, 'numbered must be a boolean');
       const spec = mediaSpec(requestedSpec);
+      if (expiresAt !== null && expiresAt !== undefined) {
+        if (typeof expiresAt !== 'string' || Number.isNaN(Date.parse(expiresAt))) fail(400, '有效期格式无效');
+        expiresAt = new Date(expiresAt).toISOString();
+      } else expiresAt = null;
       return transaction(() => {
         requireProject(id);
         channelBudgets.allocateForProject({ projectId: id, quota, quantity });
         const createdAt = new Date().toISOString();
+        if (numbered) db.prepare('INSERT INTO card_serial(id, next) VALUES (1, 1) ON CONFLICT(id) DO NOTHING').run();
         const insert = db.prepare(`INSERT INTO quota_codes
-          (id, project_id, code_hash, code_suffix, units, created_at, issuance_state, quota_json, media_spec_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+          (id, project_id, code_hash, code_suffix, units, created_at, issuance_state, quota_json, media_spec_json, expires_at, card_number)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        const takeNumber = db.prepare('UPDATE card_serial SET next = next + 1 WHERE id = 1 RETURNING next - 1 AS n');
         const codes = [];
+        const cardNumbers = [];
         for (let index = 0; index < quantity; index += 1) {
-          const code = `QTA-${randomBytes(18).toString('hex').toUpperCase()}`;
-          insert.run(randomUUID(), id, hashCode(code), code.slice(-4), units, createdAt, redeemable ? 'active' : 'stock', quota ? JSON.stringify(quota) : null, spec ? JSON.stringify(spec) : null);
+          let code = mintActivationCode();
+          for (let attempt = 0; attempt < 5 && db.prepare('SELECT 1 FROM quota_codes WHERE code_hash=?').get(hashCode(code)); attempt += 1) code = mintActivationCode();
+          const cardNumber = numbered ? `DXS-${String(takeNumber.get().n).padStart(4, '0')}` : null;
+          insert.run(randomUUID(), id, hashCode(code), code.slice(-4), units, createdAt, redeemable ? 'active' : 'stock', quota ? JSON.stringify(quota) : null, spec ? JSON.stringify(spec) : null, expiresAt, cardNumber);
           codes.push(code);
+          if (cardNumber) cardNumbers.push(cardNumber);
         }
-        return { projectId: id, quantity, units, codes, ...(quota ? { quota } : {}), ...(spec ? { mediaSpec: spec } : {}) };
+        return { projectId: id, quantity, units, codes, ...(cardNumbers.length ? { cardNumbers } : {}), ...(expiresAt ? { expiresAt } : {}), ...(quota ? { quota } : {}), ...(spec ? { mediaSpec: spec } : {}) };
       });
     },
 
@@ -235,7 +252,7 @@ export function createQuota(db) {
       return transaction(() => {
         const row = db.prepare('SELECT issuance_state FROM quota_codes WHERE id=?').get(codeId);
         if (!row) fail(404, 'Activation code not found');
-        if (row.issuance_state === 'revoked') fail(409, 'Activation code has been revoked');
+        if (row.issuance_state === 'revoked') fail(409, '这张卡已作废，不能再激活');
         db.prepare("UPDATE quota_codes SET issuance_state='active' WHERE id=? AND issuance_state='stock'").run(codeId);
       });
     },
@@ -244,12 +261,17 @@ export function createQuota(db) {
       if (typeof idempotent !== 'boolean') fail(400, 'idempotent must be boolean');
       id = projectId(id);
       userId = text(userId, 'userId');
-      const codeHash = hashCode(text(code, 'code').toUpperCase());
+      const codeHashes = activationCodeDigests(text(code, 'code', 120));
       return transaction(() => {
         requireProject(id);
-        const row = db.prepare('SELECT * FROM quota_codes WHERE code_hash = ? AND project_id = ?').get(codeHash, id);
+        let row = null;
+        for (const codeHash of codeHashes) {
+          row = db.prepare('SELECT * FROM quota_codes WHERE code_hash = ? AND project_id = ?').get(codeHash, id);
+          if (row) break;
+        }
         if (!row) fail(404, 'Activation code not found for this project');
         if (row.issuance_state !== 'active') fail(409, '此卡密尚未售出或已停用，不能兑换');
+        if (row.redeemed_by === null && row.expires_at && row.expires_at <= new Date().toISOString()) fail(400, '激活码已超过有效期，请联系工作人员');
         if (row.redeemed_by !== null) {
           if (!idempotent || row.redeemed_by !== userId) fail(409, 'Activation code already redeemed');
           const quota = readQuota(row.quota_json);
@@ -359,9 +381,37 @@ export function createQuota(db) {
       });
     },
 
+    revokeCode({ codeId } = {}) {
+      codeId = text(codeId, 'codeId', 64);
+      return transaction(() => {
+        const row = db.prepare('SELECT * FROM quota_codes WHERE id=?').get(codeId);
+        if (!row) fail(404, '找不到这张卡');
+        if (row.redeemed_by) fail(409, '这张卡已经兑换，不能作废剩余额度；如需停用请联系管理员单独处理');
+        if (row.issuance_state !== 'revoked') db.prepare("UPDATE quota_codes SET issuance_state='revoked' WHERE id=? AND redeemed_by IS NULL").run(codeId);
+        return { id: codeId, revoked: true, cardNumber: row.card_number };
+      });
+    },
+
+    findByCardNumber(cardNumber) {
+      if (typeof cardNumber !== 'string' || !/^DXS-[0-9]{4,}$/u.test(cardNumber.trim().toUpperCase())) fail(400, '卡号格式应为 DXS-0001');
+      const row = db.prepare('SELECT * FROM quota_codes WHERE card_number=?').get(cardNumber.trim().toUpperCase());
+      if (!row) fail(404, '没有这张卡号');
+      const quota = readQuota(row.quota_json);
+      const result = {
+        id: row.id, cardNumber: row.card_number, projectId: row.project_id, units: row.units,
+        status: row.issuance_state === 'revoked' ? 'revoked' : row.redeemed_by ? 'redeemed' : row.issuance_state,
+        redeemed: Boolean(row.redeemed_by), redeemedBy: row.redeemed_by, redeemedAt: row.redeemed_at,
+        expiresAt: row.expires_at, ...(quota ? { quota } : {}),
+        mediaSpec: row.media_spec_json ? mediaSpec(JSON.parse(row.media_spec_json)) : null,
+      };
+      if (row.redeemed_by) result.balance = accountBalance(row.project_id, row.redeemed_by);
+      return result;
+    },
+
     listCodes() {
       return db.prepare(`SELECT id, project_id AS projectId, code_suffix AS codeSuffix, units, quota_json,
-        CASE WHEN redeemed_at IS NULL THEN 'unused' ELSE 'redeemed' END AS status,
+        card_number AS cardNumber, expires_at AS expiresAt,
+        CASE WHEN issuance_state='revoked' THEN 'revoked' WHEN redeemed_at IS NULL THEN 'unused' ELSE 'redeemed' END AS status,
         redeemed_by AS redeemedBy, redeemed_at AS redeemedAt, created_at AS createdAt
         FROM quota_codes ORDER BY created_at DESC, id`).all().map(({ quota_json, ...row }) => ({ ...row, ...(quota_json ? { quota: readQuota(quota_json) } : {}) }));
     },

@@ -54,7 +54,7 @@ test('preissued inventory is encrypted, counted by exact SKU, and unusable befor
   const exported = commerce.exportBatch({ batchId: batch.batchId });
   assert.equal(exported.codes.length, 2);
   const code = exported.codes[0].code;
-  assert.match(code, /^QTA-[0-9A-F]{36}$/u);
+  assert.match(code, /^QTA(?:-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){4}$/u);
   assert.throws(() => quota.redeem({ projectId: 'writing', userId: 'buyer', code }), status(409));
   assert.ok(!JSON.stringify(commerce.listInventory()).includes(code));
   assert.ok(!JSON.stringify(db.prepare('SELECT * FROM shop_inventory').all()).includes(code));

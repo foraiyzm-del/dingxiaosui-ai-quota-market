@@ -34,6 +34,12 @@ async function failure(response:Response):Promise<never>{
  if(response.status===401||response.status===403)throw new ApiError(503,'发卡服务接入凭证无效或权限不足，请联系管理员');
  throw new ApiError([400,402,404,409,429].includes(response.status)?response.status:503,reason||'发卡服务处理失败，请稍后重试');
 }
+export function normalizeActivationCode(value:string){
+ const compact=value.trim().toUpperCase().replace(/[\s-]+/g,'');
+ if(/^QTA[0-9A-F]{36}$/.test(compact))return `QTA-${compact.slice(3)}`;
+ if(/^QTA[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{16}$/.test(compact)){const body=compact.slice(3);return `QTA-${body.slice(0,4)}-${body.slice(4,8)}-${body.slice(8,12)}-${body.slice(12)}`;}
+ throw new ApiError(400,'激活码格式不正确，请按卡面上的分组核对，横线、空格和大小写都可以');
+}
 export async function quotaCenterRequest<T=unknown>(path:string,body?:unknown,options:{timeoutMs?:number}={}):Promise<T>{
  const response=await request(path,body,options.timeoutMs||130000);
  if(!response.ok)return failure(response);
@@ -73,8 +79,7 @@ async function readAccount(hash:string){return db().prepare('SELECT q.*,u.status
 // This function receives only the pasted card. Identity and all counts come from
 // persistent server records and an authenticated center receipt, never the browser.
 export async function activateQuotaCard(value:unknown):Promise<QuotaAccount>{
- configuration();const code=field(value,100,true).toUpperCase();
- if(!/^QTA-[A-F0-9]{36}$/.test(code))throw new ApiError(400,'激活码格式不正确，请完整复制购买后获得的码');
+ configuration();const code=normalizeActivationCode(field(value,120,true));
  const hash=await fingerprint(code),time=new Date().toISOString();
  let row=await readAccount(hash);
  if(!row){

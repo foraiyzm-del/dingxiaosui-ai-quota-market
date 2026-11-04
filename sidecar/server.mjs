@@ -13,6 +13,7 @@ import { createGeneration } from './generation.mjs';
 import { createPaymentProvider } from './payment-provider.mjs';
 import { configurePlatformCatalog } from './sample-platforms.mjs';
 import { createChannelBudgets } from './channel-budgets.mjs';
+import { createSiteSettings } from './site-settings.mjs';
 
 const sha = s => createHash('sha256').update(s).digest('hex');
 const equal = (a, b) => {
@@ -33,6 +34,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
   const commerce = createCommerce(db, { quota, channels, platforms, secret: config.merchantKey });
   configurePlatformCatalog(db, quota, commerce, platforms);
   const generation = createGeneration(db, { quota, channels, platforms, ...generationOptions });
+  const siteSettings = createSiteSettings(db);
   const paymentProvider = createPaymentProvider(db, { commerce, secret: config.merchantKey, ...paymentOptions });
   const keyFile = path.join(root, 'local/project-keys.json');
   let projectKeys;
@@ -115,8 +117,26 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
     try {
       const requestHost = req.headers.host;
       const configuredOrigin = paymentProvider.safeSettings().publicBaseUrl;
-      const allowedOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...(configuredOrigin ? [configuredOrigin] : [])];
-      if (!allowedOrigins.some(origin => new URL(origin).host === requestHost)) fail(403, '请求域名未配置');
+      const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, '127.0.0.1', 'localhost']);
+      const allowOrigin = value => { try { if (value) allowedHosts.add(new URL(value).host); } catch { /* ignore invalid config */ } };
+      allowOrigin(configuredOrigin);
+      allowOrigin(config.publicOrigin);
+      allowOrigin(process.env.CENTER_PUBLIC_ORIGIN);
+      allowOrigin(siteSettings.get().dingxiaosuiOrigin);
+      for (const item of [...(config.allowedHosts || []), ...(process.env.CENTER_ALLOWED_HOSTS || '').split(',')]) {
+        const value = String(item || '').trim();
+        if (!value) continue;
+        if (value.includes('://')) allowOrigin(value);
+        else allowedHosts.add(value);
+      }
+      const allowedOrigins = [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
+      for (const host of allowedHosts) {
+        if (host.includes('://')) continue;
+        allowedOrigins.push(`${host.includes('localhost') || host.startsWith('127.') ? 'http' : 'https'}://${host}`);
+      }
+      if (configuredOrigin) allowedOrigins.push(configuredOrigin);
+      const hostAllowed = requestHost && [...allowedHosts].some(host => host === requestHost || host === requestHost.replace(/:\d+$/u, ''));
+      if (!hostAllowed) fail(403, '请求域名未配置');
       const url = new URL(req.url, `http://127.0.0.1:${port}`), route = url.pathname;
       if (!['GET', 'HEAD'].includes(req.method) && req.headers.origin && !allowedOrigins.includes(req.headers.origin)) fail(403, '请求来源无效');
       const generationPoll = req.method === 'GET' && (route === '/api/health' || /^\/api\/v1\/(?:generation\/[^/]+(?:\/content)?|balance)$/.test(route) || /^\/api\/platforms\/[^/]+\/(?:jobs\/[^/]+(?:\/content)?|balance)$/.test(route));
@@ -139,7 +159,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
           db.prepare('DELETE FROM web_sessions WHERE hash=?').run(sha(cookieMap.center_session)); setCookie('center_session', '', 0); return json({ ok: true });
         }
         if (route === '/api/admin/state' && req.method === 'GET') return json({ payments: commerce.listOrders(), products: commerce.listProducts({ admin: true }), channels: channels.listChannels(), commerceStats: commerce.stats(), projects: quota.listProjects(), codes: quota.listCodes(), usage: quota.listUsage(), stats: quota.stats(), qrConfigured: await qrReady(), storeUrl: `http://127.0.0.1:${config.port}`, gatewayPrepared: true, gatewayRunning: false,
-          platforms: platforms.listPlatforms(), inventory: commerce.listInventory(), batches: commerce.listBatches(), generationJobs: generation.listJobs(), generationStats: generation.stats(), paymentSettings: paymentProvider.safeSettings(), paymentIssues: paymentProvider.listIssues(),
+          platforms: platforms.listPlatforms(), inventory: commerce.listInventory(), batches: commerce.listBatches(), generationJobs: generation.listJobs(), generationStats: generation.stats(), paymentSettings: paymentProvider.safeSettings(), paymentIssues: paymentProvider.listIssues(), siteSettings: siteSettings.get(),
           audit: db.prepare('SELECT action,detail,created_at AS createdAt FROM center_audit ORDER BY id DESC LIMIT 100').all(), ...storeInfo() });
         if (route === '/api/admin/platforms' && req.method === 'POST') {
           const result = platforms.savePlatform(await input());
@@ -162,8 +182,31 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
           const result = channelBudgets.saveBudget(await input());
           audit('channel.budget_saved', result); return json(result);
         }
+        if (route === '/api/admin/site-settings' && req.method === 'POST') {
+          const result = siteSettings.save(await input()); audit('site.settings_saved', { origin: result.dingxiaosuiOrigin ? 'set' : 'cleared' }); return json(result);
+        }
+        if (route === '/api/admin/inventory/lookup' && req.method === 'GET') return json(commerce.lookupCard({ cardNumber: url.searchParams.get('cardNumber') }));
+        if (route === '/api/admin/inventory/revoke' && req.method === 'POST') {
+          const data = await input();
+          const result = data.batchId ? commerce.revokeInventoryBatch({ batchId: data.batchId }) : commerce.revokeInventoryCard({ cardNumber: data.cardNumber, id: data.id });
+          audit('inventory.revoked', result); return json(result);
+        }
         if (route === '/api/admin/inventory/export' && req.method === 'GET') {
-          const result = commerce.exportBatch({ batchId: url.searchParams.get('batchId') }); audit('inventory.exported', { batchId: result.batch?.id ?? url.searchParams.get('batchId') }); return json(result);
+          const batchId = url.searchParams.get('batchId');
+          const origin = url.searchParams.get('origin') || siteSettings.get().dingxiaosuiOrigin;
+          const format = url.searchParams.get('format') || 'json';
+          audit('inventory.exported', { batchId, format });
+          if (format === 'csv') {
+            const file = commerce.exportCsv({ batchId, origin });
+            res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${file.filename}"` });
+            return res.end(file.body);
+          }
+          if (format === 'qrzip') {
+            const file = await commerce.exportQrZip({ batchId, origin });
+            res.writeHead(200, { 'content-type': 'application/zip', 'content-disposition': `attachment; filename="${file.filename}"` });
+            return res.end(file.body);
+          }
+          const result = commerce.exportBatch({ batchId }); return json(result);
         }
         const resolveJob = route.match(/^\/api\/admin\/generation\/([^/]+)\/resolve$/);
         if (resolveJob && req.method === 'POST') { const result = await generation.resolveJob({ ...(await input()), id: resolveJob[1] }); audit('generation.resolved', { id: result.id, status: result.status }); return json(result); }
@@ -334,7 +377,9 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
       if (!error.status) console.error(error.message);
     }
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  const bindHost = config.host || process.env.CENTER_BIND_HOST || '127.0.0.1';
+  if (typeof bindHost !== 'string' || !/^(?:127\.0\.0\.1|0\.0\.0\.0|::|localhost|[0-9.]+|[a-fA-F0-9:]+)$/u.test(bindHost)) fail(400, '监听地址无效');
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, bindHost, resolve); });
   const expiryTimer = setInterval(() => { try { commerce.expireOrders(); } catch (error) { console.error('订单释放失败：', error.message); } }, 60000);
   expiryTimer.unref();
   let generationPoll;

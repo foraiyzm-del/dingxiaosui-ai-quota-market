@@ -7,9 +7,11 @@
 - 协议：`apimart`
 - 接口地址：`https://api.apimart.ai/v1`
 - 密钥：仅填写到本机后台，数据库加密存储。
-- 文案：`deepseek-v4.1-flash`
+- 文案：`deepseek-v4.1-flash`（领导体验卡这一批改为 `claude-sonnet-5-5`，失败时可降到 deepseek）
 - 图片：`gpt-image-2.5-flare`
-- 视频：`seedance-2.0-mini`
+- 视频：`seedance-2.0-mini`（领导体验卡这一批改为 `seedance-2.5`，720p、5 秒、无声；失败时可降到 `seedance-2.0` 720p）
+
+领导体验卡的模型写在该批次的卡密上，不会替换上面这套全站默认。`seedance-2.5` 仍走 `POST /v1/videos/generations`，用 `duration`、`resolution`、`size`、`generate_audio`，返回 `data[0].task_id`，再用 `GET /v1/tasks/{task_id}` 查询。它默认带声、默认 720p，所以卡密里的无声和 5 秒必须显式传。
 
 使用已有密钥时，还须确保密钥的模型限制允许以上模型。保存配置本身不会发起模型调用。
 

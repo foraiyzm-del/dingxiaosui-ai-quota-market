@@ -16,6 +16,9 @@ export function apimartPayload(fields, model) {
     if (fields.aspectRatio) payload.size = fields.aspectRatio;
   } else {
     if (/^seedance-2\.0(?:-mini|-fast)?$/u.test(model)) Object.assign(payload, { duration: 5, resolution: '480p', size: '16:9', generate_audio: false });
+    // seedance-2.5 defaults to 720p and audible. Silence and 5s must be explicit.
+    // Exact seedance-2.0 (the leader-card fallback) is 720p as well; mini stays 480p.
+    if (/^seedance-2\.5$/u.test(model) || /^seedance-2\.0$/u.test(model)) Object.assign(payload, { duration: 5, resolution: '720p', size: '16:9', generate_audio: false });
     if (fields.seconds) payload.duration = Number(fields.seconds);
     if (fields.size) payload.size = fields.size;
     if (fields.aspectRatio) payload.size = fields.aspectRatio;
@@ -45,8 +48,9 @@ export function normalizeApimartResponse(capability, response) {
   const result = task.result;
   const status = task.status === 'submitted' ? 'queued' : task.status;
   const id = task.task_id ?? task.id;
+  const progress = Number.isInteger(task.progress) && task.progress >= 0 && task.progress <= 100 ? task.progress : undefined;
   return {
-    id, status, usage: task.usage,
+    id, status, ...(progress !== undefined ? { progress } : {}), usage: task.usage,
     ...(capability === 'image' ? { data: urls(result?.images).slice(0, 1).map(url => ({ url })) }
       : { url: urls(result?.videos)[0] }),
   };

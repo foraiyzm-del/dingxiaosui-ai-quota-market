@@ -19,7 +19,7 @@ export async function askQuotaModel(userId:string,instructions:string,input:unkn
   userId:account.centerUserId,requestId:'text:'+requestId,capability:'text',prompt:'丁小穗文案创作',
   messages:[{role:'system',content:prepared.instructions+'\n仅输出一个有效的 JSON 对象，不要 Markdown 代码块。'},{role:'user',content:JSON.stringify(prepared.input)}],
   responseFormat:'json_object',maxTokens:outputLimit,
- }),account.centerUserId,'text');
+ },{timeoutMs:260000}),account.centerUserId,'text');
  if(job.status==='failed')throw new ApiError(502,'本次文案生成失败，创作中心已返还预留次数。');
  if(job.status!=='succeeded'&&job.status!=='ready')throw new ApiError(409,job.status==='uncertain'?'本次文案结果待核对，次数仍预留；请保留原请求，不要新建重复生成。':'本次文案仍在处理中，请稍后用原请求重试，不会重复扣次。');
  let output:Record<string,unknown>;try{output=JSON.parse(job.output?.text||'');}catch{throw new ApiError(502,'文案已返回，但内容格式待核对；原任务已保留，请联系管理员，不要重新生成。');}

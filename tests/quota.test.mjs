@@ -49,7 +49,7 @@ test('activation codes are project-bound, one-use, random and stored as hashes o
   const generated = quota.generateCodes({ projectId: 'writing', quantity: 2, units: 7 });
   assert.equal(new Set(generated.codes).size, 2);
   const code = generated.codes[0];
-  assert.match(code, /^QTA-[0-9A-F]{36}$/u);
+  assert.match(code, /^QTA(?:-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}){4}$/u);
   assert.throws(() => quota.redeem({ projectId: 'images', code, userId: 'alice' }), status(404));
   assert.equal(quota.balance({ projectId: 'images', userId: 'alice' }).available, 0);
   const redeemed = quota.redeem({ projectId: 'writing', code: ` ${code.toLowerCase()} `, userId: 'alice' });
