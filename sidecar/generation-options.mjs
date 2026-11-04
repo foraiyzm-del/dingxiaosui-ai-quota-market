@@ -1,4 +1,5 @@
 import { imageMime } from './image.mjs';
+import { reasoningControls } from './model-tiers.mjs';
 
 const fail = message => { throw Object.assign(new Error(message), { status: 400 }); };
 export const MAX_REFERENCE_BYTES = 6 * 1024 * 1024;
@@ -49,7 +50,9 @@ export function generationOptions(input, capability) {
 }
 
 export function textPayload(fields, model, defaultMaxTokens) {
+  const reasoning = reasoningControls(model);
   return { model, messages: fields.messages ?? [{ role: 'user', content: fields.prompt }], stream: false,
     ...((fields.maxTokens ?? defaultMaxTokens) ? { max_tokens: fields.maxTokens ?? defaultMaxTokens } : {}),
-    ...(fields.responseFormat ? { response_format: { type: fields.responseFormat } } : {}) };
+    ...(fields.responseFormat ? { response_format: { type: fields.responseFormat } } : {}),
+    ...(reasoning ? { ...reasoning } : {}) };
 }

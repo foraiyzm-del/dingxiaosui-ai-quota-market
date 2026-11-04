@@ -2,6 +2,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createChannels } from '../sidecar/channels.mjs';
 import { leaderQuote } from '../sidecar/leader-batch.mjs';
+import { describeMissingModels, listAccessibleModels, missingLeaderModels } from '../sidecar/model-access.mjs';
 
 const centerUrl = (process.env.CENTER_URL || 'http://127.0.0.1:3199').replace(/\/$/, '');
 const dingUrl = (process.env.DING_URL || 'http://127.0.0.1:8845').replace(/\/$/, '');
@@ -75,6 +76,11 @@ try {
       const valid = response.ok && payload.success !== false && !payload.error;
       const balance = payload.unlimited_quota ? '不限额度' : payload.remain_balance != null ? `剩余 ${payload.remain_balance}（积分 ${payload.remain_credits ?? '未知'}）` : '接口没有返回余额';
       note(`APIMart「${channel.name}」`, valid, valid ? balance : `密钥或余额接口不可用（HTTP ${response.status}）`);
+      try {
+        const available = await listAccessibleModels({ baseUrl: channel.baseUrl, apiKey: secret });
+        const missing = missingLeaderModels(available);
+        note(`APIMart「${channel.name}」领导卡模型`, missing.length === 0, describeMissingModels(missing));
+      } catch (error) { note(`APIMart「${channel.name}」领导卡模型`, false, error.status ? `模型列表接口返回 HTTP ${error.status}` : '模型列表暂时查不到'); }
     }
   } finally { writable.close(); }
 } catch (error) { note('APIMart 密钥', false, error.code === 'ENOENT' ? '找不到本机配置，跳过余额检查' : '余额检查没有完成'); }

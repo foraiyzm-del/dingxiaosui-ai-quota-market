@@ -8,6 +8,7 @@ import { createCommerce } from '../sidecar/commerce.mjs';
 import { createChannelBudgets } from '../sidecar/channel-budgets.mjs';
 import { createSiteSettings } from '../sidecar/site-settings.mjs';
 import { issueLeaderBatch, leaderQuote } from '../sidecar/leader-batch.mjs';
+import { describeMissingModels, listAccessibleModels, missingLeaderModels } from '../sidecar/model-access.mjs';
 import { root, loadConfig } from './setup.mjs';
 
 const args = new Map();
@@ -20,7 +21,7 @@ for (let index = 2; index < process.argv.length; index += 1) {
   else args.set(key, 'true');
 }
 if (args.has('help')) {
-  console.log(`用法：node scripts/issue-leader-cards.mjs [--quantity 120] [--days 90] [--origin https://丁小穗域名] [--top-up] [--force]
+  console.log(`用法：node scripts/issue-leader-cards.mjs [--quantity 120] [--days 90] [--origin https://丁小穗域名] [--top-up] [--force] [--allow-missing-models]
 
 默认 120 张（100 张发放 + 20 张备用），每张 10 次文案、15 张图、2 条视频，90 天有效。
 高配模型只写在这批卡上，不会改已有商品。激活码写入 local/leader-cards/，不要提交到 Git。`);
@@ -44,6 +45,30 @@ try {
   const commerce = createCommerce(db, { quota, channels, platforms, secret: config.merchantKey });
   const budgets = createChannelBudgets(db);
   const siteSettings = createSiteSettings(db);
+  let platform = null;
+  try { platform = platforms.getPlatform('dingxiaosui'); } catch { platform = null; }
+  const videoBinding = platform?.bindings.find(item => item.capability === 'video');
+  let blocked = false;
+  if (videoBinding) {
+    const channel = channels.listChannels().find(item => item.id === videoBinding.channelId);
+    const apiKey = channels.getForExecution({ channelId: videoBinding.channelId, capability: 'video', model: videoBinding.model }).apiKey;
+    try {
+      const available = await listAccessibleModels({ baseUrl: channel.baseUrl, apiKey });
+      const missing = missingLeaderModels(available);
+      if (missing.length) {
+        console.error(describeMissingModels(missing));
+        if (args.get('allow-missing-models') !== 'true') {
+          console.error('请到 APIMart 后台给这把密钥开通上面的模型后再制卡。若仍要先印卡，生成时会自动降级，请加 --allow-missing-models。');
+          blocked = true;
+        } else console.log('已按 --allow-missing-models 继续制卡。用户生成时会自动改用已开通的模型。');
+      } else console.log(describeMissingModels(missing));
+    } catch (error) {
+      console.error(error.status ? `暂时查不到模型权限（HTTP ${error.status}）。` : '暂时查不到模型权限。');
+      if (args.get('allow-missing-models') !== 'true') blocked = true;
+    }
+  }
+  if (blocked) process.exitCode = 1;
+  if (!blocked) {
   const issued = issueLeaderBatch({ quota, channels, platforms, commerce, budgets, siteSettings, quantity, validDays, origin: args.get('origin') || '', topUp: args.get('top-up') === 'true', force: args.get('force') === 'true' });
   const folder = path.join(root, 'local/leader-cards');
   await mkdir(folder, { recursive: true });
@@ -62,4 +87,5 @@ try {
   console.log(zipPath ? `二维码：${zipPath}` : '未填写 --origin，暂未导出二维码。配置丁小穗域名后可在后台再导出。');
   if (issued.addedModels.length) console.log(`已在原渠道补上模型：${issued.addedModels.join('、')}。平台默认绑定没有改。`);
   console.log('这些文件含激活码，只交给印刷和现场发放，不要发到群里或提交到 Git。');
+  }
 } finally { db.close(); }

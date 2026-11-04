@@ -7,7 +7,7 @@ import { publicAddress, resolveUpstreamAddresses } from './upstream-dns.mjs';
 import { generationOptions, referenceImage, textPayload } from './generation-options.mjs';
 import { imageMime } from './image.mjs';
 import { mediaSpec } from './media-spec.mjs';
-import { modelPricing, modelTimeoutMs } from './model-tiers.mjs';
+import { fallbackChain, modelPricing, modelTimeoutMs } from './model-tiers.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const now = () => new Date().toISOString();
@@ -82,9 +82,26 @@ function usage(data) {
   const raw = data?.usage;
   if (!raw || typeof raw !== 'object') return null;
   const integer = value => Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  const details = raw.completion_tokens_details || raw.output_tokens_details || {};
   const inputTokens = integer(raw.prompt_tokens ?? raw.input_tokens);
-  const outputTokens = integer(raw.completion_tokens ?? raw.output_tokens);
-  return { inputTokens, outputTokens, totalTokens: integer(raw.total_tokens) || inputTokens + outputTokens };
+  const completionTokens = integer(raw.completion_tokens ?? raw.output_tokens);
+  const reasoningTokens = integer(details.reasoning_tokens ?? raw.reasoning_tokens);
+  // Official DeepSeek usage already folds reasoning into completion_tokens.
+  // When the gateway reports them separately, completion is smaller than reasoning.
+  const outputTokens = completionTokens >= reasoningTokens ? completionTokens : completionTokens + reasoningTokens;
+  return { inputTokens, outputTokens, reasoningTokens, totalTokens: Math.max(integer(raw.total_tokens), inputTokens + outputTokens) };
+}
+function modelAccessDenied(status, text) {
+  return status === 403 && /does not have access to model|no access to (?:the )?model|model_not_allowed/i.test(text || '');
+}
+function resolutionRejected(status, text) {
+  return (status === 400 || status === 422) && /resolution|720p|unsupported|not support|不支持/i.test(text || '');
+}
+async function errorText(response) {
+  try {
+    const text = typeof response.text === 'function' ? await response.text() : '';
+    return String(text || '').slice(0, 2000);
+  } catch { return ''; }
 }
 function estimate(pricing, tokenUsage) {
   if (!pricing || !Object.keys(pricing).length) return null;
@@ -359,41 +376,67 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     }
     return payload;
   }
-  async function recover(id, message) {
+  function attemptedFallbacks(id) {
+    return new Set(db.prepare("SELECT detail FROM generation_audit WHERE job_id=? AND action='generation.fallback'").all(id).map(row => {
+      try { return JSON.parse(row.detail).to; } catch { return null; }
+    }).filter(Boolean));
+  }
+  async function recover(id, message, { accessDenied = false } = {}) {
     const row = rowById(id);
     const snapshot = parse(row.request_json) || {};
-    const fallback = snapshot.fallbacks?.[row.capability];
-    const used = db.prepare("SELECT 1 FROM generation_audit WHERE job_id=? AND action='generation.fallback'").get(id);
-    if (!fallback || used || snapshot.hasReferenceImage) return finish(id, 'failed', { error: message });
-    const fallbackModel = typeof fallback === 'string' ? fallback : fallback.model;
+    if (snapshot.hasReferenceImage) return finish(id, 'failed', { error: message });
+    const primary = snapshot.primaryModel || row.model;
+    const chain = fallbackChain(row.capability, primary, snapshot.fallbacks?.[row.capability]);
+    const hops = db.prepare("SELECT COUNT(*) AS n FROM generation_audit WHERE job_id=? AND action='generation.fallback'").get(id).n;
+    if (!accessDenied && hops > 0) return finish(id, 'failed', { error: message });
+    const tried = attemptedFallbacks(id);
+    tried.add(row.model);
+    const step = chain.find(item => !tried.has(item.model));
+    if (!step) return finish(id, 'failed', { error: accessDenied ? '这把密钥开通的模型都试过了，预留次数已退回' : message });
     let config;
-    try { config = channels.getForExecution({ channelId: row.channel_id, capability: row.capability, model: fallbackModel }); }
-    catch { return finish(id, 'failed', { error: `${message.replace(/，预留次数已退回$/, '')}；备用模型未配置，预留次数已退回` }); }
+    try { config = channels.getForExecution({ channelId: row.channel_id, capability: row.capability, model: step.model }); }
+    catch {
+      audit(id, 'generation.fallback', { from: row.model, to: step.model, skipped: true, reason: 'model_not_configured' });
+      return accessDenied ? recover(id, message, { accessDenied: true }) : finish(id, 'failed', { error: `${message.replace(/，预留次数已退回$/, '')}；备用模型未配置，预留次数已退回` });
+    }
     if (row.capability === 'video' && config.videoRequestFormat === 'multipart') return finish(id, 'failed', { error: message });
-    audit(id, 'generation.fallback', { from: row.model, to: fallbackModel });
+    audit(id, 'generation.fallback', { from: row.model, to: step.model, reason: accessDenied ? 'model_access_denied' : 'primary_failed' });
     const pricing = priced(config);
     db.prepare('UPDATE generation_jobs SET model=?,pricing_json=?,status=?,error=NULL,upstream_id=NULL,updated_at=? WHERE id=?')
-      .run(fallbackModel, pricing ? JSON.stringify(pricing) : null, 'running', now(), id);
+      .run(step.model, pricing ? JSON.stringify(pricing) : null, 'running', now(), id);
     const fields = { capability: row.capability, prompt: snapshot.prompt, ...(snapshot.size ? { size: snapshot.size } : {}),
       ...(snapshot.seconds ? { seconds: snapshot.seconds } : {}), ...(snapshot.aspectRatio ? { aspectRatio: snapshot.aspectRatio } : {}),
       ...(snapshot.responseFormat ? { responseFormat: snapshot.responseFormat } : {}), ...(snapshot.maxTokens ? { maxTokens: snapshot.maxTokens } : {}),
       ...(snapshot.messages ? { messages: snapshot.messages } : {}) };
-    const payload = buildPayload(fields, fallbackModel, config.protocol, { video: snapshot.videoSpec || null, image: snapshot.imageSpec || null });
+    const resolutions = [step.resolution, step.resolutionFallback].filter(Boolean);
+    let lastDenied = false;
     try {
-      const response = await fetchUpstream(endpoint(config, row.capability), { method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:fallback` }, body: JSON.stringify(payload), redirect: 'manual', signal: AbortSignal.timeout(modelTimeoutMs(fallbackModel, config.timeoutMs)) }, undefined, { attempts: 2 });
-      if (!response.ok) {
-        if (response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status)) return finish(id, 'failed', { error: `备用模型也拒绝了请求（HTTP ${response.status}），预留次数已退回` });
-        return uncertain(id, `备用模型返回 HTTP ${response.status}，结果未知，次数暂时预留`);
+      for (const resolution of resolutions.length ? resolutions : [null]) {
+        const video = snapshot.videoSpec ? { ...snapshot.videoSpec, ...(resolution ? { resolution } : {}) } : (resolution ? { seconds: 5, resolution, audio: false } : null);
+        const payload = buildPayload(fields, step.model, config.protocol, { video, image: snapshot.imageSpec || null });
+        const response = await fetchUpstream(endpoint(config, row.capability), { method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:fallback:${step.model}:${resolution || 'default'}` }, body: JSON.stringify(payload), redirect: 'manual', signal: AbortSignal.timeout(modelTimeoutMs(step.model, config.timeoutMs)) }, undefined, { attempts: 2 });
+        if (!response.ok) {
+          const detail = await errorText(response);
+          if (modelAccessDenied(response.status, detail)) { lastDenied = true; break; }
+          if (resolution && resolution !== step.resolutionFallback && resolutionRejected(response.status, detail) && step.resolutionFallback) {
+            audit(id, 'generation.fallback', { from: step.model, to: step.model, resolution: step.resolutionFallback, reason: 'resolution_unsupported' });
+            continue;
+          }
+          if (response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status)) return finish(id, 'failed', { error: `备用模型也拒绝了请求（HTTP ${response.status}），预留次数已退回` });
+          return uncertain(id, `备用模型返回 HTTP ${response.status}，结果未知，次数暂时预留`);
+        }
+        const data = await readJson(response);
+        rememberUpstream(id, data, config.apiKey);
+        const outcome = consume(id, data, config.apiKey, config.protocol, { deferFailure: true });
+        if (outcome?.deferredFailure) return accessDenied ? recover(id, outcome.deferredFailure, { accessDenied: true }) : finish(id, 'failed', { error: outcome.deferredFailure });
+        return outcome;
       }
-      const data = await readJson(response);
-      rememberUpstream(id, data, config.apiKey);
-      const outcome = consume(id, data, config.apiKey, config.protocol, { deferFailure: true });
-      if (outcome?.deferredFailure) return finish(id, 'failed', { error: outcome.deferredFailure });
-      return outcome;
     } catch (error) {
       if (error.safeRejection || error.preconnect) return finish(id, 'failed', { error: '备用模型未能连接，预留次数已退回' });
       return uncertain(id, '备用模型超时或响应无效；为避免重复调用，次数暂时预留，请管理员核对');
     }
+    if (lastDenied) return recover(id, '这把密钥没有该模型权限，已改用下一个可用模型', { accessDenied: true });
+    return finish(id, 'failed', { error: message });
   }
   async function applyResult(id, data, apiKey, protocol) {
     const outcome = consume(id, data, apiKey, protocol, { deferFailure: true });
@@ -425,7 +468,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         aspectRatio: fields.aspectRatio ?? null, responseFormat: fields.responseFormat ?? null, maxTokens: fields.maxTokens ?? null,
         messages: fields.messages ?? null, hasReferenceImage: Boolean(fields.referenceImage),
         ...(profile?.video ? { videoSpec: profile.video } : {}), ...(profile?.image ? { imageSpec: profile.image } : {}),
-        ...(profile?.fallbacks ? { fallbacks: profile.fallbacks } : {}), ...(profile?.tier ? { tier: profile.tier } : {}) };
+        ...(profile?.fallbacks ? { fallbacks: profile.fallbacks } : {}), ...(profile?.tier ? { tier: profile.tier } : {}), primaryModel: model };
       try {
         transaction(() => {
           db.prepare(`INSERT INTO generation_jobs(id,project_id,user_id,request_id,request_hash,capability,channel_id,model,units,status,pricing_json,request_json,created_at,updated_at)
@@ -467,7 +510,8 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         generationSubmitted = true;
         const response = await fetchUpstream(endpoint(config, fields.capability), { method: 'POST', headers, body, redirect: 'manual', signal: AbortSignal.timeout(modelTimeoutMs(model, config.timeoutMs)) }, undefined, { attempts: 2 });
         if (!response.ok) {
-          if (response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status)) return recover(id, `上游拒绝请求（HTTP ${response.status}），预留次数已退回`);
+          const detail = await errorText(response);
+          if (response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status)) return recover(id, `上游拒绝请求（HTTP ${response.status}），预留次数已退回`, { accessDenied: modelAccessDenied(response.status, detail) });
           return uncertain(id, `上游返回 HTTP ${response.status}，结果未知，次数暂时预留`);
         }
         const data = await readJson(response);

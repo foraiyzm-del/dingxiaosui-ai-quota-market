@@ -173,6 +173,8 @@ test('APIMart text uses compatible chat with a bounded output budget and protoco
     assert.equal(body.model, 'deepseek-v4.1-flash');
     assert.equal(body.max_tokens, 1024);
     assert.equal(body.stream, false);
+    assert.equal(body.reasoning_effort, 'none');
+    assert.deepEqual(body.thinking, { type: 'disabled' });
     return json({ choices: [{ message: { content: '测试文案' } }], usage: { prompt_tokens: 10, completion_tokens: 4 } });
   });
   assert.equal((await generation.execute({ ...input, capability: 'text' })).output.text, '测试文案');
