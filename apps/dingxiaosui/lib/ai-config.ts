@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { ApiError, db, field } from './tenancy';
 import { localAuthEnabled } from './identity';
+import { parseUpstreamBody } from './upstream-body';
 export type ModelKind='openai-compatible'|'qwen'|'ark';
 export type Provider={name:string;model:string;endpoint:string;key:string;kind:ModelKind;jsonMode:boolean};
 export class ModelOutcomeUnknownError extends ApiError {constructor(message='模型请求结果待确认，可能已产生费用；请保留原任务，勿重复提交'){super(502,message);}}
@@ -60,7 +61,7 @@ export async function requestCompletion(provider:Provider,messages:{role:string;
  }
  try{
   type Completion={choices?:{message?:{content?:string}}[]};
-  const data=await response.json() as Completion&{code?:number;data?:Completion};
+  const data=parseUpstreamBody(await response.text()) as Completion&{code?:number;data?:Completion};
   if(!data||typeof data!=='object'||Array.isArray(data)||data.code!==undefined&&data.code!==200)throw Error();
   // APIMart documents both the standard completion and a code/data envelope.
   // An explicit error envelope must never be mistaken for generated content.

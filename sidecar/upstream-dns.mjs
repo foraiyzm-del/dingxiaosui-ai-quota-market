@@ -9,6 +9,8 @@ const RESOLVER_ADDRESS = '1.1.1.1';
 const MAX_DOH_BYTES = 65536;
 const MAX_CACHE_ENTRIES = 128;
 const MAX_CACHE_SECONDS = 60;
+const DOH_TIMEOUT_MS = 15000;
+const DOH_ATTEMPTS = 2;
 
 export function publicAddress(address) {
   if (isIP(address) === 4) {
@@ -42,8 +44,12 @@ export function queryOfficialDoh(hostname, type, { signal } = {}) {
   if (!ordinaryDomain(hostname) || ![1, 28].includes(type)) throw reject('无法安全查询上游域名');
   const url = new URL(`https://${RESOLVER_HOST}/dns-query`);
   url.search = new URLSearchParams({ name: canonical(hostname), type: String(type) }).toString();
-  const timeout = AbortSignal.timeout(8000);
+  const timeout = AbortSignal.timeout(DOH_TIMEOUT_MS);
   const requestSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  return queryOnce(url, requestSignal);
+}
+
+function queryOnce(url, requestSignal) {
   return new Promise((resolve, fail) => {
     const request = httpsRequest(url, { method: 'GET', headers: { Accept: 'application/dns-json' },
       servername: RESOLVER_HOST, rejectUnauthorized: true, agent: false, signal: requestSignal,
@@ -114,6 +120,42 @@ export function parseDohAnswer(hostname, type, response) {
  */
 export function createUpstreamResolver({ lookupImpl = lookup, queryImpl = queryOfficialDoh, clock = Date.now } = {}) {
   const cache = new Map();
+  const inflight = new Map();
+  async function queryRetry(name, type, signal) {
+    let last;
+    for (let attempt = 0; attempt < DOH_ATTEMPTS; attempt += 1) {
+      try { return await queryImpl(name, type, { signal }); }
+      catch (error) {
+        last = error;
+        if (signal?.aborted || error?.safeRejection) break;
+      }
+    }
+    throw last;
+  }
+  async function resolvePublic(name, signal) {
+    const cached = cache.get(name);
+    if (cached && cached.expiresAt > clock()) return cached.addresses.map(entry => ({ ...entry }));
+    cache.delete(name);
+    const pending = inflight.get(name);
+    if (pending) return pending.then(addresses => addresses.map(entry => ({ ...entry })));
+    const work = (async () => {
+      let responses;
+      try { responses = await Promise.all([1, 28].map(type => queryRetry(name, type, signal))); }
+      catch { throw reject('上游使用虚拟 DNS，但安全 DNS 查询失败'); }
+      const parsed = responses.map((response, index) => parseDohAnswer(name, [1, 28][index], response));
+      const addresses = [...new Map(parsed.flatMap(result => result.addresses).map(entry => [entry.address, entry])).values()];
+      if (!addresses.length) throw reject('安全 DNS 未返回可用公网地址');
+      const ttl = Math.min(MAX_CACHE_SECONDS, ...parsed.map(result => result.ttl));
+      if (ttl > 0) {
+        if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
+        cache.set(name, { addresses: addresses.map(entry => ({ ...entry })), expiresAt: clock() + ttl * 1000 });
+      }
+      if (signal?.aborted) throw reject('上游请求超时');
+      return addresses;
+    })().finally(() => inflight.delete(name));
+    inflight.set(name, work);
+    return work;
+  }
   return async function resolve(hostname, { signal, allowPrivateUpstreams = false } = {}) {
     if (signal?.aborted) throw reject('上游请求超时');
     let addresses;
@@ -122,22 +164,7 @@ export function createUpstreamResolver({ lookupImpl = lookup, queryImpl = queryO
     if (!Array.isArray(addresses) || !addresses.length || addresses.some(entry => !isIP(entry.address) || entry.family !== isIP(entry.address))) throw reject('无法解析上游地址');
     if (allowPrivateUpstreams || addresses.every(entry => publicAddress(entry.address))) return addresses;
     if (!ordinaryDomain(hostname) || !addresses.every(entry => fakeAddress(entry.address))) throw reject('上游地址不能指向本机、内网或保留网段');
-    const name = canonical(hostname), cached = cache.get(name);
-    if (cached && cached.expiresAt > clock()) return cached.addresses.map(entry => ({ ...entry }));
-    cache.delete(name);
-    let responses;
-    try { responses = await Promise.all([1, 28].map(type => queryImpl(name, type, { signal }))); }
-    catch { throw reject('上游使用虚拟 DNS，但安全 DNS 查询失败'); }
-    const parsed = responses.map((response, index) => parseDohAnswer(name, [1, 28][index], response));
-    addresses = [...new Map(parsed.flatMap(result => result.addresses).map(entry => [entry.address, entry])).values()];
-    if (!addresses.length) throw reject('安全 DNS 未返回可用公网地址');
-    const ttl = Math.min(...parsed.map(result => result.ttl));
-    if (ttl > 0) {
-      if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
-      cache.set(name, { addresses: addresses.map(entry => ({ ...entry })), expiresAt: clock() + ttl * 1000 });
-    }
-    if (signal?.aborted) throw reject('上游请求超时');
-    return addresses;
+    return resolvePublic(canonical(hostname), signal);
   };
 }
 

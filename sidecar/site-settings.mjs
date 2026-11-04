@@ -11,7 +11,8 @@ export function createSiteSettings(db) {
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || (url.protocol === 'http:' && !local)) {
       fail(400, '丁小穗公开地址请填写 https 域名；本机试用才可以使用 http://127.0.0.1');
     }
-    if (url.pathname !== '/' && url.pathname !== '') fail(400, '丁小穗公开地址只填写域名，不要带路径');
+    // Operators often paste the workbench entry. Redeem links still use the site origin.
+    if (url.pathname !== '/' && url.pathname !== '' && url.pathname !== '/workbench.html') fail(400, '丁小穗公开地址只填写域名。生产入口是 https://域名/workbench.html，扫码地址会用同一域名下的 /redeem');
     return url.origin;
   }
   return {

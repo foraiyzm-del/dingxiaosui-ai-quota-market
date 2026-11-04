@@ -23,14 +23,14 @@ export function apimartImagePayload(model: string, prompt: string, ratio: string
   const configured = apimartImageProfiles[profile];
   if (model !== configured.model) throw new ApimartProtocolError('图片模型与当前服务档位不匹配，请联系管理员');
   if (!apimartRatios.includes(ratio as ApimartRatio)) throw new ApimartProtocolError('图片比例不支持');
-  return {...configured, prompt, size: ratio, output_format: 'png', moderation: 'auto'};
+  return {...configured, prompt, size: ratio, output_format: 'png', moderation: 'auto', stream: false};
 }
 export function apimartVideoPayload(model:string,prompt:string,ratio:string='16:9',duration:number|null=15){
   if(model!==APIMART_VIDEO_MODEL)throw new ApimartProtocolError('视频模型与当前体验档位不匹配，请联系管理员');
   if(prompt.length>4000)throw new ApimartProtocolError('视频创作要求过长，请精简描述后再提交');
   if(duration!==null&&duration!==15)throw new ApimartProtocolError('当前视频体验每次生成 15 秒，请勿更改时长');
   if(!['16:9','9:16','1:1'].includes(ratio))throw new ApimartProtocolError('视频比例不支持');
-  return {...apimartVideoProfile,prompt,size:ratio};
+  return {...apimartVideoProfile,prompt,size:ratio,stream:false};
 }
 export function apimartTaskUrl(id: string) {
   if (!/^[A-Za-z0-9_-]{1,160}$/.test(id)) throw new ApimartProtocolError('媒体服务返回的任务标识不正确');

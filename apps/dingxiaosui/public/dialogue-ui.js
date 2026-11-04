@@ -379,8 +379,11 @@
   }
   async function pollPendingMedia(){
     if(pollingMedia||!owner||document.visibilityState==='hidden'||busy)return;
-    const pending=new Set((media?.jobs||[]).filter(job=>['submitting','queued','running','saving'].includes(job.status)).map(job=>job.id));
-    for(const thread of state.conversations)for(const message of thread.messages)if(message.mediaJob&&['submitting','queued','running','saving'].includes(message.mediaJob.status))pending.add(message.mediaJob.id);
+    const live=job=>['submitting','queued','running','saving','unknown'].includes(job.status);
+    const fresh=job=>live(job)&&Date.now()-Date.parse(job.createdAt||'')<60000;
+    const known=[...(media?.jobs||[]),...state.conversations.flatMap(thread=>thread.messages.map(message=>message.mediaJob).filter(Boolean))];
+    fastMediaPoll=known.some(fresh);
+    const pending=new Set(known.filter(live).map(job=>job.id));
     if(!pending.size)return;
     pollingMedia=true;
     try{
@@ -398,7 +401,8 @@
     }catch{/* Existing tasks remain on the server; the next status read resumes them. */}
     finally{pollingMedia=false;}
   }
-  setInterval(()=>void pollPendingMedia(),8000);
+  let fastMediaPoll=true;
+  (function scheduleMediaPoll(){setTimeout(()=>{void pollPendingMedia();scheduleMediaPoll();},fastMediaPoll?2000:8000);})();
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){void refreshCredits();void pollPendingMedia();}});
   window.addEventListener('focus',()=>void refreshCredits());
   void initialize();

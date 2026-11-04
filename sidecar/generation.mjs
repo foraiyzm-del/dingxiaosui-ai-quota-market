@@ -3,6 +3,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { isIP } from 'node:net';
 import { apimartPayload, normalizeApimartResponse } from './apimart.mjs';
+import { parseUpstreamBody } from './upstream-body.mjs';
 import { publicAddress, resolveUpstreamAddresses } from './upstream-dns.mjs';
 import { generationOptions, referenceImage, textPayload } from './generation-options.mjs';
 import { imageMime } from './image.mjs';
@@ -242,11 +243,11 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
           chunks.push(Buffer.from(value));
         }
       } finally { reader.releaseLock(); }
-      return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      return parseUpstreamBody(Buffer.concat(chunks).toString('utf8'));
     }
     const raw = await response.text();
     if (Buffer.byteLength(raw) > MAX_JSON_BYTES) throw new Error('响应超过限制');
-    return JSON.parse(raw);
+    return parseUpstreamBody(raw);
   }
   function stageReady(id, output, tokenUsage) {
     db.prepare(`UPDATE generation_jobs SET status='ready',output_json=?,error=NULL,token_usage_json=?,updated_at=? WHERE id=?`)
@@ -370,6 +371,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     if (profile?.image?.resolution === '1k' && fields.capability === 'image' && protocol === 'apimart') {
       Object.assign(payload, { n: 1, size: profile.image.size || '1:1', resolution: '1k', quality: profile.image.quality || 'low' });
     }
+    if (protocol === 'apimart') payload.stream = false;
     if (profile?.video && fields.capability === 'video') {
       if (protocol === 'apimart') Object.assign(payload, { duration: profile.video.seconds, resolution: profile.video.resolution, generate_audio: profile.video.audio });
       else payload.seconds = String(profile.video.seconds);
@@ -417,6 +419,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         const response = await fetchUpstream(endpoint(config, row.capability), { method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:fallback:${step.model}:${resolution || 'default'}` }, body: JSON.stringify(payload), redirect: 'manual', signal: AbortSignal.timeout(modelTimeoutMs(step.model, config.timeoutMs)) }, undefined, { attempts: 2 });
         if (!response.ok) {
           const detail = await errorText(response);
+          console.error('upstream non-2xx', response.status, detail.slice(0, 300));
           if (modelAccessDenied(response.status, detail)) { lastDenied = true; break; }
           if (resolution && resolution !== step.resolutionFallback && resolutionRejected(response.status, detail) && step.resolutionFallback) {
             audit(id, 'generation.fallback', { from: step.model, to: step.model, resolution: step.resolutionFallback, reason: 'resolution_unsupported' });
@@ -511,6 +514,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         const response = await fetchUpstream(endpoint(config, fields.capability), { method: 'POST', headers, body, redirect: 'manual', signal: AbortSignal.timeout(modelTimeoutMs(model, config.timeoutMs)) }, undefined, { attempts: 2 });
         if (!response.ok) {
           const detail = await errorText(response);
+          console.error('upstream non-2xx', response.status, detail.slice(0, 300));
           if (response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status)) return recover(id, `上游拒绝请求（HTTP ${response.status}），预留次数已退回`, { accessDenied: modelAccessDenied(response.status, detail) });
           return uncertain(id, `上游返回 HTTP ${response.status}，结果未知，次数暂时预留`);
         }
@@ -549,8 +553,8 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       const rows = db.prepare("SELECT id,project_id,user_id FROM generation_jobs WHERE capability IN ('image','video') AND status='running' AND upstream_id IS NOT NULL ORDER BY updated_at LIMIT ?").all(count);
       const results = [];
       // Keep provider concurrency bounded while rotating through pending jobs on each timer tick.
-      for (let offset = 0; offset < rows.length; offset += 3) {
-        results.push(...await Promise.allSettled(rows.slice(offset, offset + 3).map(row => api.getJob({ id: row.id, projectId: row.project_id, userId: row.user_id, refresh: true }))));
+      for (let offset = 0; offset < rows.length; offset += 5) {
+        results.push(...await Promise.allSettled(rows.slice(offset, offset + 5).map(row => api.getJob({ id: row.id, projectId: row.project_id, userId: row.user_id, refresh: true }))));
       }
       return { checked: rows.length, settled: results.filter(result => result.status === 'fulfilled' && ['succeeded', 'failed'].includes(result.value.status)).length };
     },
@@ -578,6 +582,8 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
             response = await fetchUpstream(url, { method: 'GET', headers: {}, redirect: 'manual', signal: AbortSignal.timeout(config.timeoutMs) }, MAX_JSON_BYTES, { attempts: 3, idempotent: true });
           } catch { fail(502, '上游图片下载失败'); }
           if (!response.ok) {
+            const detail = await errorText(response);
+            console.error('upstream content non-2xx', response.status, detail.slice(0, 300));
             if (response.status === 404 || response.status === 410) unusable('上游图片暂时无法下载', '上游图片不存在或已失效，预留次数已退回');
             fail(502, '上游图片暂时无法下载');
           }
@@ -597,6 +603,8 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       try { response = await fetchUpstream(assetUrl || endpoint(config, 'videoContent', row.upstream_id), { method: 'GET', headers: assetUrl ? {} : { Authorization: `Bearer ${config.apiKey}` }, redirect: 'manual', signal: AbortSignal.timeout(Math.max(config.timeoutMs, row.capability === 'video' ? 120000 : config.timeoutMs)) }, MAX_VIDEO_BYTES, { attempts: 3, idempotent: true }); }
       catch { fail(502, '上游视频下载失败'); }
       if (!response.ok) {
+        const detail = await errorText(response);
+        console.error('upstream content non-2xx', response.status, detail.slice(0, 300));
         if (response.status === 404 || response.status === 410) unusable('上游视频暂时无法下载', '上游视频不存在或已失效，预留次数已退回');
         fail(502, '上游视频暂时无法下载');
       }

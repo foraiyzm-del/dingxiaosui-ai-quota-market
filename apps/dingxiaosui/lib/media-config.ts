@@ -50,7 +50,8 @@ export async function mediaFetch(provider:MediaProvider,method:'GET'|'POST',payl
  const endpoint=validateMediaEndpoint(provider.endpoint,provider.capability,provider.kind);
  if(taskId&&!/^[a-zA-Z0-9_-]{1,160}$/.test(taskId))throw new ApiError(502,'媒体服务返回的任务标识不正确');
  const url=taskId?(provider.kind==='apimart'?apimartTaskUrl(taskId):`${endpoint}/${encodeURIComponent(taskId)}`):endpoint;
- const init:RequestInit={method,headers:{authorization:`Bearer ${await decryptSecret(provider.keyCipher)}`,'content-type':'application/json'},...(method==='POST'?{body:JSON.stringify(payload)}:{}),redirect:'manual',signal:AbortSignal.timeout(method==='POST'&&provider.capability==='image'&&provider.kind!=='apimart'?90000:20000)};
+ const posted=method==='POST'&&payload&&typeof payload==='object'&&!Array.isArray(payload)&&!Object.hasOwn(payload as object,'stream')?{...(payload as object),stream:false}:payload;
+ const init:RequestInit={method,headers:{authorization:`Bearer ${await decryptSecret(provider.keyCipher)}`,'content-type':'application/json'},...(method==='POST'?{body:JSON.stringify(posted)}:{}),redirect:'manual',signal:AbortSignal.timeout(method==='POST'&&provider.capability==='image'&&provider.kind!=='apimart'?90000:20000)};
  // Tests replace fetch only in their isolated Node process. Production always calls the validated upstream.
  return fetch(url,init);
 }
