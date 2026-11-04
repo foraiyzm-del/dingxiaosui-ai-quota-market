@@ -8,10 +8,10 @@ import {parseUpstreamBody} from './upstream-body';
 import {eventActivationEnabled,reserveEventCredit,completeEventCredit,releaseEventCredit,eventCreditForRequest,markEventCreditUnknown} from './event-credits';
 import {quotaAccount,quotaCenterEnabled,quotaCenterRequest,quotaCenterContent} from './quota-center';
 import {encryptQuotaPayload,decryptQuotaPayload,verifyQuotaJob,type QuotaJob} from './quota-generation';
-import {downloadVerdict,nextDeliveryState,quotaJobUpdateSql,quotaSweepWhere} from './quota-media-recovery';
+import {REFUND_CONFIRMED_MESSAGE,REFUND_PENDING_MESSAGE,downloadVerdict,nextSaveAttempts,quotaDeliveredSql,quotaJobUpdateSql,quotaOpenWork,quotaRefundSql,quotaSaveCommitSql,quotaSweepWhere} from './quota-media-recovery';
 
 type Output={url:string;persisted:boolean;expiresAt?:string;expiresAtSource?:'provider';bucketKey?:string;contentType?:string};
-export type MediaJobRow={id:string;user_id:string;capability:MediaCapability;idempotency_key:string;request_hash:string;prompt:string;model_name:string;provider_kind:MediaKind|'quota-center';provider_endpoint:string;provider_model:string;key_cipher:string;status:string;upstream_id:string|null;outputs_json:string;error:string|null;created_at:string;updated_at:string;poll_after:number};
+export type MediaJobRow={id:string;user_id:string;capability:MediaCapability;idempotency_key:string;request_hash:string;prompt:string;model_name:string;provider_kind:MediaKind|'quota-center';provider_endpoint:string;provider_model:string;key_cipher:string;status:string;upstream_id:string|null;outputs_json:string;error:string|null;created_at:string;updated_at:string;poll_after:number;delivery_state:string;save_attempts:number;refund_state:string};
 type JobRow=MediaJobRow;
 // Only server code may supply this argument. Never spread request JSON into it.
 export type TrustedMediaOptions={imageProfile?:ApimartImageProfile};
@@ -209,62 +209,77 @@ async function updateQuotaJob(id:string,status:string,error:string|null=null,out
  await db().prepare(quotaJobUpdateSql).bind(status,error,new Date().toISOString(),outputs?JSON.stringify(outputs):null,upstreamId||null,upstreamId||null,status,id,status,status).run();
 }
 async function noteSaveAttempt(id:string){
- const row=await db().prepare('SELECT save_attempts FROM media_jobs WHERE id=?').bind(id).first<{save_attempts:number}>();
- const attempts=(row?.save_attempts||0)+1;
+ const row=await db().prepare('SELECT save_attempts FROM media_jobs WHERE id=?').bind(id).first<{save_attempts:number|null}>();
+ const attempts=nextSaveAttempts(row?.save_attempts);
  await db().prepare('UPDATE media_jobs SET save_attempts=? WHERE id=?').bind(attempts,id).run();
  return attempts;
 }
-async function markDelivery(id:string,state:'pending'|'delivered'){
- await db().prepare("UPDATE media_jobs SET delivery_state=?,poll_after=? WHERE id=? AND provider_kind='quota-center'").bind(state,state==='pending'?Date.now()+5000:Date.now()+86400000,id).run();
+async function commitSavedQuota(id:string,outputs:Output[],deliveryState:'pending'|'delivered'){
+ const pollAfter=deliveryState==='pending'?Date.now()+5000:Date.now()+86400000;
+ await db().batch([db().prepare(quotaSaveCommitSql).bind(new Date().toISOString(),JSON.stringify(outputs),deliveryState,pollAfter,id)]);
+}
+async function markDelivered(id:string){
+ await db().prepare(quotaDeliveredSql).bind(new Date().toISOString(),Date.now()+86400000,id).run();
+}
+async function writeRefund(id:string,state:'pending'|'refunded',message:string){
+ await db().batch([db().prepare(quotaRefundSql).bind(message,new Date().toISOString(),state,state==='pending'?Date.now()+5000:Date.now()+86400000,id)]);
 }
 async function centerQuotaJob(row:JobRow){
  const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)return null;
  try{return verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generation/'+encodeURIComponent(row.upstream_id)+'?userId='+encodeURIComponent(account.centerUserId)),account.centerUserId,row.capability);}
  catch{return null;}
 }
-async function failSaving(row:JobRow,verdict:{refund:boolean;message:string},center:QuotaJob|null){
- if(verdict.refund){try{await settleReadyQuota(row,'reject','作品无法保存，预留次数退回');}catch{/* Center refund is idempotent. */}}
+async function rejectQuotaDelivery(row:JobRow,reason:string){
+ let confirmed=false;
+ try{await settleReadyQuota(row,'reject',reason);confirmed=true;}catch{confirmed=false;}
+ await writeRefund(row.id,confirmed?'refunded':'pending',confirmed?REFUND_CONFIRMED_MESSAGE:REFUND_PENDING_MESSAGE);
+}
+async function failSaving(row:JobRow,verdict:{refund:boolean;message:string}){
+ if(verdict.refund){await rejectQuotaDelivery(row,'作品无法保存，预留次数退回');return;}
  await updateQuotaJob(row.id,'failed',verdict.message);
 }
 async function deliverSavedQuota(row:JobRow){
- if(row.delivery_state==='delivered'||row.status==='failed')return;
+ if((row.delivery_state||'none')==='delivered'||row.status==='failed')return;
  const center=await centerQuotaJob(row);
  if(center?.status==='failed'){await updateQuotaJob(row.id,'failed','作品未能交付，预留次数已退回。可以点“重新生成”。');return;}
- if(center?.status==='succeeded'){await markDelivery(row.id,nextDeliveryState(row.delivery_state,true));return;}
+ if(center?.status==='succeeded'){await markDelivered(row.id);return;}
  try{
   await settleReadyQuota(row,'accept');
-  await markDelivery(row.id,nextDeliveryState(row.delivery_state,true));
+  await markDelivered(row.id);
  }catch{
-  await markDelivery(row.id,nextDeliveryState(row.delivery_state,false));
-  await db().prepare("UPDATE media_jobs SET error=?,updated_at=? WHERE id=? AND status='succeeded' AND delivery_state='pending'").bind('作品已保存，次数确认还没完成。请稍后刷新，不会重新生成。',new Date().toISOString(),row.id).run();
+  await db().prepare("UPDATE media_jobs SET delivery_state='pending',error=?,updated_at=?,poll_after=? WHERE id=? AND provider_kind='quota-center' AND status='succeeded'").bind('作品已保存，次数确认还没完成。请稍后刷新，不会重新生成。',new Date().toISOString(),Date.now()+5000,row.id).run();
  }
 }
 async function saveQuotaOutput(row:JobRow){
  const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)throw new ApiError(503,'创作任务暂时无法确认，请联系管理员');
  let outputs:Output[]=[];try{outputs=JSON.parse(row.outputs_json);}catch{}
  if(!(outputs.length===1&&outputs[0].persisted)){
-  const response=await quotaCenterContent('/generation/'+encodeURIComponent(row.upstream_id)+'/content?userId='+encodeURIComponent(account.centerUserId)+'&index=0');
-  if(!response.ok){
-   let snippet='';try{snippet=(await response.text()).slice(0,300);}catch{}
-   console.error('quota content download failed',response.status,snippet);
+  try{
+   const response=await quotaCenterContent('/generation/'+encodeURIComponent(row.upstream_id)+'/content?userId='+encodeURIComponent(account.centerUserId)+'&index=0');
+   if(!response.ok){
+    let snippet='';try{snippet=(await response.text()).slice(0,300);}catch{}
+    console.error('quota content download failed',response.status,snippet);
+    throw new ApiError(response.status,'作品已生成，保存还没完成。请稍后刷新原任务。');
+   }
+   const bytes=await boundedBytes(response,(row.capability==='image'?32:100)*1024*1024);
+   outputs=[await putAsset(row,bytes,row.capability==='image'?imageMime(bytes):videoMime(bytes),0)];
+  }catch(error){
    const attempts=await noteSaveAttempt(row.id);
+   const status=error instanceof ApiError?error.status:503;
    const center=await centerQuotaJob(row);
-   const verdict=downloadVerdict(response.status,attempts,center?.status);
-   if(verdict.terminal){await failSaving(row,verdict,center);return;}
-   throw new ApiError(502,verdict.message);
+   const verdict=downloadVerdict(status,attempts,center?.status);
+   if(verdict.terminal){await failSaving(row,verdict);return;}
+   throw error instanceof ApiError?error:new ApiError(503,verdict.message);
   }
-  const bytes=await boundedBytes(response,(row.capability==='image'?32:100)*1024*1024);
-  outputs=[await putAsset(row,bytes,row.capability==='image'?imageMime(bytes):videoMime(bytes),0)];
  }
  const center=await centerQuotaJob(row);
  if(center?.status==='failed'){await updateQuotaJob(row.id,'failed','作品未能交付，预留次数已退回。可以点“重新生成”。');return;}
  const pending=center?.status!=='succeeded';
- await updateQuotaJob(row.id,'succeeded',null,outputs);
- await markDelivery(row.id,pending?'pending':'delivered');
+ await commitSavedQuota(row.id,outputs,pending?'pending':'delivered');
  if(pending)await deliverSavedQuota(await ownedMediaJob(row.user_id,row.id));
 }
 async function settleReadyQuota(row:JobRow,action:'accept'|'reject',reason?:string){
- const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)return;
+ const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)throw new ApiError(503,'创作任务暂时无法确认，请联系管理员');
  await quotaCenterRequest('/generation/'+encodeURIComponent(row.upstream_id)+'/delivery',{userId:account.centerUserId,action,...(reason?{reason}:{})});
 }
 async function acceptQuotaResult(row:JobRow,result:QuotaJob){
@@ -280,22 +295,31 @@ async function acceptQuotaResult(row:JobRow,result:QuotaJob){
    try{if(account)current=verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generation/'+encodeURIComponent(result.id)+'?userId='+encodeURIComponent(account.centerUserId)),account.centerUserId,row.capability);}catch{current=null;}
    if(current?.status==='failed'){await updateQuotaJob(row.id,'failed',current.error||'作品未能交付，预留次数已退回');return;}
    const permanent=error instanceof ApiError&&/格式不受支持|不是支持的 MP4|超过本平台保存上限/.test(error.message);
-   if(permanent){try{await settleReadyQuota(await ownedMediaJob(row.user_id,row.id),'reject','作品未能保存到本站，预留次数退回');}catch{/* Center refund is idempotent. */}await updateQuotaJob(row.id,'failed','作品未能保存，预留次数已退回');return;}
+   if(permanent){await rejectQuotaDelivery(await ownedMediaJob(row.user_id,row.id),'作品未能保存到本站，预留次数退回');return;}
    throw error;
   }
  }else if(result.status==='failed')await updateQuotaJob(row.id,'failed','本次生成失败，创作中心已返还预留次数。',undefined,result.id);
  else if(result.status==='uncertain')await updateQuotaJob(row.id,'unknown','结果待核对，次数仍预留；请保留原任务并联系管理员。',undefined,result.id);
  else await updateQuotaJob(row.id,result.status,null,undefined,result.id);
 }
+function quotaRecovery(row:JobRow){
+ const delivery=row.delivery_state||'none',refund=row.refund_state||'none';
+ if(row.status==='succeeded'&&(delivery==='pending'||delivery==='none'))return 'delivery';
+ if(row.status==='failed'&&refund==='pending')return 'refund';
+ if(row.status==='failed'||row.status==='succeeded')return '';
+ return 'work';
+}
 async function pollQuotaMediaJob(row:JobRow){
- if(row.status==='failed'||(row.status==='succeeded'&&row.delivery_state!=='pending'))return publicJob(row);
+ if(!quotaRecovery(row))return publicJob(row);
  const lease=Date.now()+150000;
- const claim=await db().prepare("UPDATE media_jobs SET poll_after=? WHERE id=? AND user_id=? AND provider_kind='quota-center' AND status!='failed' AND (status!='succeeded' OR delivery_state='pending') AND poll_after<=? RETURNING id").bind(lease,row.id,row.user_id,Date.now()).first();
+ const claim=await db().prepare(`UPDATE media_jobs SET poll_after=? WHERE id=? AND user_id=? AND provider_kind='quota-center' AND ${quotaOpenWork} AND poll_after<=? RETURNING id`).bind(lease,row.id,row.user_id,Date.now()).first();
  if(!claim)return publicJob(row);
  try{
   row=await ownedMediaJob(row.user_id,row.id);
   const account=await quotaAccount(row.user_id);if(!account)throw new ApiError(403,'创作账户暂时不可用，请联系管理员');
-  if(row.status==='succeeded'&&row.delivery_state==='pending'){await deliverSavedQuota(row);return publicJob(await ownedMediaJob(row.user_id,row.id));}
+  const recovery=quotaRecovery(row);
+  if(recovery==='refund'){await rejectQuotaDelivery(row,'作品无法保存，预留次数退回');return publicJob(await ownedMediaJob(row.user_id,row.id));}
+  if(recovery==='delivery'){await deliverSavedQuota(row);return publicJob(await ownedMediaJob(row.user_id,row.id));}
   if(row.status==='saving'){
    const center=await centerQuotaJob(row);
    if(center?.status==='failed'){await updateQuotaJob(row.id,'failed','作品未能交付，预留次数已退回。可以点“重新生成”。');return publicJob(await ownedMediaJob(row.user_id,row.id));}
