@@ -67,7 +67,7 @@ DING_BUILD_ID=构建目录里的 BUILD_ID
 
 ## Nginx
 
-两个站点都要把读超时放到 300 秒。文案有时要一两分钟，高清视频提交和下载也不能被 60 秒掐断。
+两个站点都要把读超时放到 600 秒。文案有时要一两分钟。高清视频实际大约 3 分钟，等待和代理超时要留到 5 分钟以上，避免做到一半被掐断。
 
 ```nginx
 server {
@@ -78,8 +78,8 @@ server {
     proxy_pass http://127.0.0.1:3199;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_read_timeout 300s;
-    proxy_send_timeout 300s;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
   }
 }
 ```

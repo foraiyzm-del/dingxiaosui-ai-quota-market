@@ -172,6 +172,9 @@
     if (intent.kind === 'plan') { proposePlan(thread, question); return; }
     if(requestedMedia){proposeMedia(thread,question,requestedMedia);return;}
     const product = D.matchProduct(question, state) || state.products.find(row => row.id === thread.productId);
+    const history = Array.isArray(retry?.history) ? retry.history : thread.messages.slice(0,-1).slice(-6).map(({role,text})=>({role,text:String(text||'').slice(0,800)}));
+    const requestTask = retry ? (retry.taskId || '') : taskId;
+    const productId = retry ? (retry.productId || '') : (product?.id || '');
     if (!connected || !owner) {
       response(thread, { text: `${product ? `已找到「${product.name}」的农品资料。` : ''}${owner ? (modelReason || '当前账号的文字模型尚未连接。资料查询、农品建档和发布安排可以直接使用；连接服务后，我就能按这些资料完成创作。') : '我可以先帮你找资料、整理农品和安排工作。使用模型创作前，请先登录账号。'}${['translate','general'].includes(intent.taskId) ? '' : '\n\n也可以先记下这次需求，服务恢复后接着做。'}`, templateTask: ['translate','general'].includes(intent.taskId) ? null : intent.taskId, original: question, productId: product?.id, source: '服务状态说明' }); return;
     }
@@ -180,7 +183,7 @@
       await window.zdxStorage.sync.flush();
       const sync = window.zdxStorage.sync.status();
       if (sync.dirty || ['conflict','stale','remote','auth'].includes(sync.phase)) throw Error('请先完成页面顶部的同步处理，再使用最新资料创作');
-      const result = await fetch('/api/dialogue', { method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-zdx-workspace-owner':owner.id},signal:controller.signal,body:JSON.stringify({ message:question, requestId, taskId, productId:retry?.productId||product?.id||'', threadId:thread.id, consent:true, revision:sync.revision, history:thread.messages.slice(0,-1).slice(-6).map(({role,text})=>({role,text:text.slice(0,800)})) }) });
+      const result = await fetch('/api/dialogue', { method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-zdx-workspace-owner':owner.id},signal:controller.signal,body:JSON.stringify({ message:question, requestId, taskId:requestTask, productId, threadId:thread.id, consent:true, revision:sync.revision, history }) });
       let value = {}; try { value = await result.json(); } catch { throw Object.assign(Error('生成时间较长，服务器还没有返回结果。请点“重试本次”，不会重复扣次。'), { name: 'TimeoutError' }); }
       if (!result.ok) throw Error(value.error || '暂时没有取得回答，请稍后重试');
       busy = false;
@@ -189,7 +192,7 @@
       busy = false;
       const timedOut = error.name === 'AbortError' || error.name === 'TimeoutError' || /超时|尚未返回|仍在处理|不完整/.test(error.message || '');
       const text = error.name === 'AbortError' ? '已停止等待。如果模型已经开始生成，请点“重试本次”，会沿用同一次请求，不会重复扣次。' : (error.message || '暂时没有取得回答');
-      response(thread, { text: timedOut || !error.message ? `${text} 失败或中断不会多扣次数；若次数已预留，重试原任务即可。` : text, source:'本次未取得有效模型结果', ...(timedOut ? { retry: { requestId, question, taskId, productId: retry?.productId || product?.id || '' } } : {}) });
+      response(thread, { text: timedOut || !error.message ? `${text} 失败或中断不会多扣次数；若次数已预留，重试原任务即可。` : text, source:'本次未取得有效模型结果', ...(timedOut ? { retry: { requestId, question, taskId:requestTask, productId, history } } : {}) });
     }
     finally { busy=false;controller=null;await refreshCredits();render(); }
   }
@@ -354,7 +357,7 @@
     if(button.dataset.planDraft){const draft=state.drafts.find(row=>row.id===button.dataset.planDraft);if(!draft)return;closeSheet();taskId='general';if(active())active().selectedDraftId=draft.id;$('#selected-tool').textContent='自动判断';$('#question').value=`安排明天发布「${draft.title}」`;$('#question').focus();return;}
     if(button.dataset.confirm){void confirmProposal(button.dataset.confirm);return;}
     if(button.dataset.refreshJob){void refreshJob(button.dataset.refreshJob);return;}
-    if(button.dataset.retryMessage){const message=active()?.messages.find(item=>item.id===button.dataset.retryMessage);if(message?.retry)void send(message.retry.question,{requestId:message.retry.requestId,taskId:message.retry.taskId,productId:message.retry.productId});return;}
+    if(button.dataset.retryMessage){const message=active()?.messages.find(item=>item.id===button.dataset.retryMessage);if(message?.retry)void send(message.retry.question,message.retry);return;}
     if(button.dataset.retryMedia){void fetch('/api/media/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({capability:button.dataset.mediaCapability||'image',modelId:null,prompt:button.dataset.mediaPrompt||'',consent:true,idempotencyKey:crypto.randomUUID().replace(/-/g,'')+crypto.randomUUID().replace(/-/g,'').slice(0,8)})}).then(async response=>{const body=await response.json();if(!response.ok)throw Error(body.error||'没有重新提交');toast(body.job?.status==='failed'?'重新生成没有成功，次数已退回':'已重新提交，成功后才会扣次数');void refreshJob(body.job.id);}).catch(error=>toast(error.message));return;}
     const id=button.dataset.saveMessage||button.dataset.officeMessage||button.dataset.copyMessage||button.dataset.revise||button.dataset.template;
     const message=active()?.messages.find(item=>item.id===id);if(!message)return;

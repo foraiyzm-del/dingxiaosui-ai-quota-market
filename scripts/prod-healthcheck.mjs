@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createChannels } from '../sidecar/channels.mjs';
 import { leaderQuote } from '../sidecar/leader-batch.mjs';
 import { describeMissingModels, listAccessibleModels, missingLeaderModels } from '../sidecar/model-access.mjs';
+import { recentJobsOk } from './health-status.mjs';
 
 const centerUrl = (process.env.CENTER_URL || 'http://127.0.0.1:3199').replace(/\/$/, '');
 const dingUrl = (process.env.DING_URL || 'http://127.0.0.1:8845').replace(/\/$/, '');
@@ -43,7 +44,7 @@ try {
   const hourAgo = new Date(Date.now() - 3600000).toISOString();
   const failed = db.prepare("SELECT COUNT(*) AS n FROM generation_jobs WHERE status='failed' AND updated_at>=?").get(hourAgo).n;
   const uncertain = db.prepare("SELECT COUNT(*) AS n FROM generation_jobs WHERE status='uncertain' AND updated_at>=?").get(hourAgo).n;
-  note('近一小时失败任务', failed === 0, `${failed} 笔失败，${uncertain} 笔结果待核对`);
+  note('近一小时失败任务', recentJobsOk(failed, uncertain), `${failed} 笔失败，${uncertain} 笔结果待核对`);
   const names = { text: '文案', image: '图片', video: '视频' };
   const channels = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='api_channels'").get()
     ? db.prepare('SELECT id,name FROM api_channels').all() : [];
