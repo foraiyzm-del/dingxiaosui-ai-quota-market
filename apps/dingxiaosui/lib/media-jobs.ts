@@ -4,9 +4,11 @@ import {listModels,ownedModel} from './user-models';
 import {agricultureMediaPrompt} from './agriculture-policy';
 import {mediaBucket,mediaCapability,mediaConfig,mediaFetch,uploadMediaReference,platformMediaAllowed,platformMediaProvider,validateMediaEndpoint,validateMediaKind,type MediaCapability,type MediaProvider,type MediaKind} from './media-config';
 import {apimartImagePayload,apimartVideoPayload,apimartSubmission,apimartTask,apimartVideoTask,ApimartProtocolError,type ApimartImageProfile} from './apimart-protocol';
+import {parseUpstreamBody} from './upstream-body';
 import {eventActivationEnabled,reserveEventCredit,completeEventCredit,releaseEventCredit,eventCreditForRequest,markEventCreditUnknown} from './event-credits';
 import {quotaAccount,quotaCenterEnabled,quotaCenterRequest,quotaCenterContent} from './quota-center';
 import {encryptQuotaPayload,decryptQuotaPayload,verifyQuotaJob,type QuotaJob} from './quota-generation';
+import {downloadVerdict,nextDeliveryState,quotaJobUpdateSql,quotaSweepWhere} from './quota-media-recovery';
 
 type Output={url:string;persisted:boolean;expiresAt?:string;expiresAtSource?:'provider';bucketKey?:string;contentType?:string};
 export type MediaJobRow={id:string;user_id:string;capability:MediaCapability;idempotency_key:string;request_hash:string;prompt:string;model_name:string;provider_kind:MediaKind|'quota-center';provider_endpoint:string;provider_model:string;key_cipher:string;status:string;upstream_id:string|null;outputs_json:string;error:string|null;created_at:string;updated_at:string;poll_after:number};
@@ -85,7 +87,7 @@ async function remoteOutput(job:JobRow,value:unknown,index:number):Promise<Outpu
  if(!canPersistHost(url,job.provider_kind))return temporary;
  try{const response=await fetch(url,{redirect:'manual',signal:AbortSignal.timeout(90000)});if(!response.ok){await response.body?.cancel();return temporary}const bytes=await boundedBytes(response,job.capability==='image'?16*1024*1024:100*1024*1024);const contentType=job.capability==='image'?imageMime(bytes):new TextDecoder().decode(bytes.slice(4,8))==='ftyp'?'video/mp4':null;if(!contentType)return temporary;return await putAsset(job,bytes,contentType,index)}catch{return temporary}
 }
-async function responseObject(response:Response){const bytes=await boundedBytes(response,24*1024*1024);try{const body=JSON.parse(new TextDecoder().decode(bytes));if(!body||typeof body!=='object'||Array.isArray(body))throw Error();return body as Record<string,unknown>}catch{throw new ApiError(502,'媒体服务响应格式不兼容，未取得有效结果')}}
+async function responseObject(response:Response){const bytes=await boundedBytes(response,24*1024*1024);try{const body=parseUpstreamBody(new TextDecoder().decode(bytes));if(!body||typeof body!=='object'||Array.isArray(body))throw Error();return body as Record<string,unknown>}catch{throw new ApiError(502,'媒体服务响应格式不兼容，未取得有效结果')}}
 function upstreamError(status:number){return status===401||status===403?'媒体服务拒绝密钥或模型权限（401/403），请检查对应模型是否已开通':status===402?'媒体服务余额不足（402），请联系管理员检查服务商余额':status===429?'媒体服务限流或额度不足（429），请检查控制台余额和配额':`媒体服务返回错误（HTTP ${status}），请核对模型能力和参数`}
 async function imageOutputs(job:JobRow,data:Record<string,unknown>){
  if(!Array.isArray(data.data)||!data.data.length)throw new ApiError(502,'媒体服务未返回图片，请核对模型能力和响应格式');
@@ -203,17 +205,63 @@ async function createQuotaMediaJob(user:Actor,options:CreateOptions,key:string,h
 }
 async function quotaJobError(id:string,message:string){await db().prepare("UPDATE media_jobs SET error=?,updated_at=? WHERE id=? AND provider_kind='quota-center' AND status NOT IN ('succeeded','failed')").bind(message,new Date().toISOString(),id).run();}
 async function updateQuotaJob(id:string,status:string,error:string|null=null,outputs?:Output[],upstreamId?:string){
- await db().prepare("UPDATE media_jobs SET status=?,error=?,updated_at=?,outputs_json=COALESCE(?,outputs_json),upstream_id=COALESCE(?,upstream_id),key_cipher=CASE WHEN ? IS NOT NULL OR ?='failed' THEN '' ELSE key_cipher END WHERE id=? AND provider_kind='quota-center' AND status NOT IN ('succeeded','failed') AND (status!='saving' OR ? IN ('saving','succeeded'))").bind(status,error,new Date().toISOString(),outputs?JSON.stringify(outputs):null,upstreamId||null,upstreamId||null,status,id,status).run();
+ // saving may become failed only after the caller verified the center job, a permanent download error, or the retry cap.
+ await db().prepare(quotaJobUpdateSql).bind(status,error,new Date().toISOString(),outputs?JSON.stringify(outputs):null,upstreamId||null,upstreamId||null,status,id,status,status).run();
+}
+async function noteSaveAttempt(id:string){
+ const row=await db().prepare('SELECT save_attempts FROM media_jobs WHERE id=?').bind(id).first<{save_attempts:number}>();
+ const attempts=(row?.save_attempts||0)+1;
+ await db().prepare('UPDATE media_jobs SET save_attempts=? WHERE id=?').bind(attempts,id).run();
+ return attempts;
+}
+async function markDelivery(id:string,state:'pending'|'delivered'){
+ await db().prepare("UPDATE media_jobs SET delivery_state=?,poll_after=? WHERE id=? AND provider_kind='quota-center'").bind(state,state==='pending'?Date.now()+5000:Date.now()+86400000,id).run();
+}
+async function centerQuotaJob(row:JobRow){
+ const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)return null;
+ try{return verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generation/'+encodeURIComponent(row.upstream_id)+'?userId='+encodeURIComponent(account.centerUserId)),account.centerUserId,row.capability);}
+ catch{return null;}
+}
+async function failSaving(row:JobRow,verdict:{refund:boolean;message:string},center:QuotaJob|null){
+ if(verdict.refund){try{await settleReadyQuota(row,'reject','作品无法保存，预留次数退回');}catch{/* Center refund is idempotent. */}}
+ await updateQuotaJob(row.id,'failed',verdict.message);
+}
+async function deliverSavedQuota(row:JobRow){
+ if(row.delivery_state==='delivered'||row.status==='failed')return;
+ const center=await centerQuotaJob(row);
+ if(center?.status==='failed'){await updateQuotaJob(row.id,'failed','作品未能交付，预留次数已退回。可以点“重新生成”。');return;}
+ if(center?.status==='succeeded'){await markDelivery(row.id,nextDeliveryState(row.delivery_state,true));return;}
+ try{
+  await settleReadyQuota(row,'accept');
+  await markDelivery(row.id,nextDeliveryState(row.delivery_state,true));
+ }catch{
+  await markDelivery(row.id,nextDeliveryState(row.delivery_state,false));
+  await db().prepare("UPDATE media_jobs SET error=?,updated_at=? WHERE id=? AND status='succeeded' AND delivery_state='pending'").bind('作品已保存，次数确认还没完成。请稍后刷新，不会重新生成。',new Date().toISOString(),row.id).run();
+ }
 }
 async function saveQuotaOutput(row:JobRow){
  const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)throw new ApiError(503,'创作任务暂时无法确认，请联系管理员');
  let outputs:Output[]=[];try{outputs=JSON.parse(row.outputs_json);}catch{}
- if(outputs.length===1&&outputs[0].persisted){await updateQuotaJob(row.id,'succeeded',null,outputs);return;}
- const response=await quotaCenterContent('/generation/'+encodeURIComponent(row.upstream_id)+'/content?userId='+encodeURIComponent(account.centerUserId)+'&index=0');
- if(!response.ok){await response.body?.cancel();throw new ApiError(502,'作品已生成，暂未保存完成；请稍后刷新原任务。');}
- const bytes=await boundedBytes(response,(row.capability==='image'?32:100)*1024*1024);
- const output=await putAsset(row,bytes,row.capability==='image'?imageMime(bytes):videoMime(bytes),0);
- await updateQuotaJob(row.id,'succeeded',null,[output]);
+ if(!(outputs.length===1&&outputs[0].persisted)){
+  const response=await quotaCenterContent('/generation/'+encodeURIComponent(row.upstream_id)+'/content?userId='+encodeURIComponent(account.centerUserId)+'&index=0');
+  if(!response.ok){
+   let snippet='';try{snippet=(await response.text()).slice(0,300);}catch{}
+   console.error('quota content download failed',response.status,snippet);
+   const attempts=await noteSaveAttempt(row.id);
+   const center=await centerQuotaJob(row);
+   const verdict=downloadVerdict(response.status,attempts,center?.status);
+   if(verdict.terminal){await failSaving(row,verdict,center);return;}
+   throw new ApiError(502,verdict.message);
+  }
+  const bytes=await boundedBytes(response,(row.capability==='image'?32:100)*1024*1024);
+  outputs=[await putAsset(row,bytes,row.capability==='image'?imageMime(bytes):videoMime(bytes),0)];
+ }
+ const center=await centerQuotaJob(row);
+ if(center?.status==='failed'){await updateQuotaJob(row.id,'failed','作品未能交付，预留次数已退回。可以点“重新生成”。');return;}
+ const pending=center?.status!=='succeeded';
+ await updateQuotaJob(row.id,'succeeded',null,outputs);
+ await markDelivery(row.id,pending?'pending':'delivered');
+ if(pending)await deliverSavedQuota(await ownedMediaJob(row.user_id,row.id));
 }
 async function settleReadyQuota(row:JobRow,action:'accept'|'reject',reason?:string){
  const account=await quotaAccount(row.user_id);if(!account||!row.upstream_id)return;
@@ -225,7 +273,6 @@ async function acceptQuotaResult(row:JobRow,result:QuotaJob){
   await updateQuotaJob(row.id,'saving','作品已生成，正在保存',undefined,result.id);
   try{
    await saveQuotaOutput(await ownedMediaJob(row.user_id,row.id));
-   if(result.status==='ready')await settleReadyQuota(await ownedMediaJob(row.user_id,row.id),'accept');
   }catch(error){
    if(result.status!=='ready')throw error;
    const account=await quotaAccount(row.user_id);
@@ -241,14 +288,19 @@ async function acceptQuotaResult(row:JobRow,result:QuotaJob){
  else await updateQuotaJob(row.id,result.status,null,undefined,result.id);
 }
 async function pollQuotaMediaJob(row:JobRow){
- if(['succeeded','failed'].includes(row.status))return publicJob(row);
+ if(row.status==='failed'||(row.status==='succeeded'&&row.delivery_state!=='pending'))return publicJob(row);
  const lease=Date.now()+150000;
- const claim=await db().prepare("UPDATE media_jobs SET poll_after=? WHERE id=? AND user_id=? AND provider_kind='quota-center' AND status NOT IN ('succeeded','failed') AND poll_after<=? RETURNING id").bind(lease,row.id,row.user_id,Date.now()).first();
+ const claim=await db().prepare("UPDATE media_jobs SET poll_after=? WHERE id=? AND user_id=? AND provider_kind='quota-center' AND status!='failed' AND (status!='succeeded' OR delivery_state='pending') AND poll_after<=? RETURNING id").bind(lease,row.id,row.user_id,Date.now()).first();
  if(!claim)return publicJob(row);
  try{
   row=await ownedMediaJob(row.user_id,row.id);
   const account=await quotaAccount(row.user_id);if(!account)throw new ApiError(403,'创作账户暂时不可用，请联系管理员');
-  if(row.status==='saving'){await saveQuotaOutput(row);return publicJob(await ownedMediaJob(row.user_id,row.id));}
+  if(row.status==='succeeded'&&row.delivery_state==='pending'){await deliverSavedQuota(row);return publicJob(await ownedMediaJob(row.user_id,row.id));}
+  if(row.status==='saving'){
+   const center=await centerQuotaJob(row);
+   if(center?.status==='failed'){await updateQuotaJob(row.id,'failed','作品未能交付，预留次数已退回。可以点“重新生成”。');return publicJob(await ownedMediaJob(row.user_id,row.id));}
+   await saveQuotaOutput(row);return publicJob(await ownedMediaJob(row.user_id,row.id));
+  }
   let result:QuotaJob;
   if(row.upstream_id)result=await quotaCenterRequest<QuotaJob>('/generation/'+encodeURIComponent(row.upstream_id)+'?userId='+encodeURIComponent(account.centerUserId));
   else{
@@ -341,7 +393,7 @@ export async function pollMediaJob(userId:string,id:string){
 // The same durable poll lease protects this worker and concurrent browser reads.
 export async function reconcilePendingMediaJobs(options:{batchSize?:number;concurrency?:number}={}){
  const bounded=(value:number|undefined,fallback:number,max:number)=>typeof value==='number'&&Number.isInteger(value)&&value>0?Math.min(value,max):fallback;
- const batchSize=bounded(options.batchSize,8,20),concurrency=bounded(options.concurrency,2,4);
+ const batchSize=bounded(options.batchSize,12,20),concurrency=bounded(options.concurrency,4,6);
  // A process can stop after saving a terminal job but before settling its hold.
  // Reconcile those local records separately; this never retries upstream work.
  let settled=0;
@@ -349,7 +401,7 @@ export async function reconcilePendingMediaJobs(options:{batchSize?:number;concu
   const terminal=(await db().prepare("SELECT j.* FROM media_jobs j WHERE EXISTS(SELECT 1 FROM event_credit_usage u WHERE u.user_id=j.user_id AND u.request_key=j.id AND ((j.status IN ('succeeded','failed') AND u.status IN ('held','unknown')) OR (j.status='unknown' AND u.status='held'))) ORDER BY j.updated_at,j.id LIMIT ?").bind(batchSize).all<JobRow>()).results;
   for(const row of terminal){await settleMediaEventCredit(row);settled++;}
  }
- const rows=(await db().prepare("SELECT id,user_id FROM media_jobs WHERE capability IN ('image','video') AND ((provider_kind='apimart' AND status IN ('queued','running','saving') AND upstream_id IS NOT NULL) OR (provider_kind='quota-center' AND status IN ('queued','running','saving','unknown'))) AND poll_after<=? ORDER BY poll_after,id LIMIT ?").bind(Date.now(),batchSize).all<{id:string;user_id:string}>()).results;
+ const rows=(await db().prepare(`SELECT id,user_id FROM media_jobs WHERE ${quotaSweepWhere} ORDER BY poll_after,id LIMIT ?`).bind(Date.now(),batchSize).all<{id:string;user_id:string}>()).results;
  let cursor=0,processed=0,failed=0;
  await Promise.all(Array.from({length:Math.min(concurrency,rows.length)},async()=>{
   for(;;){const row=rows[cursor++];if(!row)return;

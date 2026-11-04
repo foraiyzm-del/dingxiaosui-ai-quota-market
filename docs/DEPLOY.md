@@ -47,9 +47,10 @@ APP_ENV=production
 PASSWORD_AUTH_ENABLED=1
 EVENT_ACTIVATION_ENABLED=1
 ZLG_GATEWAY_REQUIRED=0
-MEDIA_BACKGROUND_ENABLED=1
 DING_BUILD_ID=构建目录里的 BUILD_ID
 ```
+
+图片和视频的后台补拉默认开启，作品生成后即使页面关着也会继续保存并确认扣次。只有要临时关掉时才设置 `MEDIA_BACKGROUND_ENABLED=0`。
 
 `QUOTA_CENTER_URL` 必须是丁小穗服务器能够访问的地址。两个程序分开放时，不要填 `http://127.0.0.1:3199`，除非 Nginx 和两个程序确实在同一台机器并且只走本机转发。
 
@@ -197,6 +198,8 @@ node scripts/issue-leader-cards.mjs --quantity 120 --days 90 --origin https://�
 ```
 
 制卡前会用 APIMart 的模型列表检查这把密钥有没有领导卡要用的模型。没有权限时会用中文写出缺哪几个，并停下来。密钥已经能用保底模型、只是高配还没开通时，可以加 `--allow-missing-models` 先把卡印出来，生成时会自动改用已开通的模型。
+
+生产站点入口是 `https://zdx.aiglink.cn/workbench.html`。制卡时 `--origin` 填 `https://zdx.aiglink.cn`（把工作台地址贴进来也可以，程序会只用域名）。二维码和 CSV 里的链接是 `https://zdx.aiglink.cn/redeem?code=激活码`。这是丁小穗同一个 Next 服务上的页面，和 `/workbench.html` 在同一进程里。更新代码后必须重新构建并重启丁小穗，旧进程里没有 `/redeem`，扫码会打开失败。
 
 如果渠道里已经登记过发码额度，而这批卡需要的次数不够，命令会停下来并写明还差多少。确认要自动补上差额时再加 `--top-up`。已经做过一批又要再做，加 `--force`。
 

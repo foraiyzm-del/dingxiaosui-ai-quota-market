@@ -90,7 +90,7 @@ test('APIMart image submission survives restart, polls wrapped results and debit
     if (init.method === 'POST') {
       posts++;
       assert.equal(url, 'https://api.apimart.ai/v1/images/generations');
-      assert.deepEqual(JSON.parse(init.body), { model: 'gpt-image-2.5-flare', prompt: '简洁环保包装测试', n: 1, size: '1:1', resolution: '1k', quality: 'low' });
+      assert.deepEqual(JSON.parse(init.body), { model: 'gpt-image-2.5-flare', prompt: '简洁环保包装测试', n: 1, size: '1:1', resolution: '1k', quality: 'low', stream: false });
       return json({ code: 200, data: [{ task_id: 'task_test', status: 'submitted' }] });
     }
     gets++;

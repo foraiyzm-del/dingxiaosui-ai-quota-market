@@ -8,7 +8,7 @@ export const APIMART_ENDPOINTS = Object.freeze({
 
 export function apimartPayload(fields, model) {
   if (fields.capability === 'text') return textPayload(fields, model, 1024);
-  const payload = { model, prompt: fields.prompt };
+  const payload = { model, prompt: fields.prompt, stream: false };
   if (fields.capability === 'image') {
     payload.n = 1;
     if (/^gpt-image-2\.5-(flare|sunburst)$/u.test(model)) Object.assign(payload, { size: '1:1', resolution: '1k', quality: 'low' });

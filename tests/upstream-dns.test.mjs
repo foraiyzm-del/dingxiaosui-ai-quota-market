@@ -90,6 +90,24 @@ test('safe DNS cache expires, cannot be mutated by callers and never overrides a
   assert.equal(calls, 4);
 });
 
+test('a burst of fake-IP lookups shares one in-flight query and retries a dropped answer', async () => {
+  let calls = 0;
+  const failed = new Set();
+  const resolve = createUpstreamResolver({ lookupImpl: async () => fake, queryImpl: async (name, type) => {
+    calls += 1;
+    await new Promise(done => setTimeout(done, 20));
+    if (type === 1 && !failed.has(name)) { failed.add(name); throw new Error('timeout'); }
+    return answer(type, type === 1 ? [record(1, '104.26.11.94', 30)] : [record(28, '2606:4700:20::681a:b5e', 30)]);
+  } });
+  const results = await Promise.all(Array.from({ length: 35 }, () => resolve(hostname)));
+  assert.equal(calls, 3);
+  assert.equal(results.length, 35);
+  assert.equal(results[0][0].address, '104.26.11.94');
+  const after = calls;
+  await resolve(hostname);
+  assert.equal(calls, after);
+});
+
 test('aborted lookups and invalid resolver queries do not make network requests', async () => {
   const controller = new AbortController(); controller.abort();
   const resolve = createUpstreamResolver({ lookupImpl: () => { throw new Error('must not resolve'); } });
