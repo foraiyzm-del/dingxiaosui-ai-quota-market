@@ -96,6 +96,23 @@ test('leader batch keeps the monthly product and platform models unchanged', t =
   assert.throws(() => state.quota.redeem({ projectId: 'dingxiaosui', userId: 'other', code: csv.split('\n')[2].split(',')[1].replaceAll('"', '') }), error => error.status === 409);
 });
 
+test('an ordinary card video failure does not call the leader video model', async t => {
+  const seen = [];
+  const state = harness(t, async (_url, init) => {
+    const body = JSON.parse(init.body);
+    seen.push(body.model);
+    if (body.model === 'seedance-2.0-mini') return json({ code: 200, data: [{ task_id: 'mini', status: 'failed' }] });
+    return json({ code: 200, data: [{ task_id: 'leader-model', status: 'submitted' }] });
+  });
+  const channel = state.channels.listChannels()[0];
+  state.channels.saveChannel({ ...channel, models: [...channel.models, { id: 'seedance-2.0', capability: 'video' }, { id: 'seedance-2.5', capability: 'video' }] });
+  const code = state.quota.generateCodes({ projectId: 'dingxiaosui', quantity: 1, quota: { text: 1, image: 1, video: 1 }, mediaSpec: { tier: 'standard', video: { seconds: 5, resolution: '480p', audio: false } } }).codes[0];
+  state.quota.redeem({ projectId: 'dingxiaosui', userId: 'member', code });
+  const result = await state.generation.execute({ projectId: 'dingxiaosui', userId: 'member', requestId: 'std-fail', capability: 'video', prompt: '月卡视频失败' });
+  assert.equal(result.status, 'failed');
+  assert.deepEqual(seen, ['seedance-2.0-mini']);
+});
+
 test('only the leader card selects the expensive models, and a failed primary falls back once', async t => {
   const seen = [];
   const state = harness(t, async (_url, init) => {

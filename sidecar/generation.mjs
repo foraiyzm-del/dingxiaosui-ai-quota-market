@@ -388,7 +388,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     const snapshot = parse(row.request_json) || {};
     if (snapshot.hasReferenceImage) return finish(id, 'failed', { error: message });
     const primary = snapshot.primaryModel || row.model;
-    const chain = fallbackChain(row.capability, primary, snapshot.fallbacks?.[row.capability]);
+    const chain = fallbackChain(row.capability, primary, snapshot.fallbacks?.[row.capability], snapshot.tier === 'leader' ? 'leader' : 'standard');
     const hops = db.prepare("SELECT COUNT(*) AS n FROM generation_audit WHERE job_id=? AND action='generation.fallback'").get(id).n;
     if (!accessDenied && hops > 0) return finish(id, 'failed', { error: message });
     const tried = attemptedFallbacks(id);

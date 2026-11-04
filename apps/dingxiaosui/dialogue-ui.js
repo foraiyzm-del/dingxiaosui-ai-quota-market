@@ -114,14 +114,17 @@
       const proposal = message.proposal ? `<div class="proposal-card"><h3>${escape(message.proposal.title)}</h3><p>${escape(message.proposal.preview || Object.entries(message.proposal.value || {}).filter(([key, value]) => value && ['name', 'origin', 'abv', 'summary', 'title', 'date', 'channel', 'body'].includes(key)).map(([key, value]) => `${({name:'农品',origin:'产地',abv:'规格',summary:'介绍',title:'主题',date:'日期',channel:'渠道',body:'内容'})[key]}：${value}`).join('\n').slice(0, 800))}</p><div class="message-actions"><button class="primary-small" data-confirm="${escape(message.id)}" ${message.applied ? 'disabled' : ''}>${message.applied ? '已保存' : message.proposal.kind === 'product' ? '确认保存农品' : message.proposal.kind === 'plan' ? '确认加入发布计划' : message.proposal.kind === 'media' ? (eventMode()?'确认生成，使用 1 张图片额度':'确认生成，使用模型额度') : '确认保存'}</button>${message.applied ? '<span class="proposal-state">页面顶部可查看同步状态</span>' : '<span class="proposal-state">核对内容后再保存</span>'}</div></div>` : '';
       const artifactActions = message.artifact ? `<button class="small-action" data-save-message="${escape(message.id)}">保存文案</button><button class="small-action" data-office-message="${escape(message.id)}">存为办公稿</button><button class="small-action" data-revise="${escape(message.id)}">继续修改</button>` : '';
       const mediaOutput = message.mediaJob ? mediaMarkup(message.mediaJob) : '';
+      const retry = message.retry ? `<button class="small-action" data-retry-message="${escape(message.id)}">重试本次，不重复扣次</button>` : '';
       const mediaLink = message.mediaHandoff && ['image','video'].includes(message.mediaHandoff.capability) && typeof message.mediaHandoff.prompt==='string' ? `<div class="media-handoff-card"><div><span>${message.mediaHandoff.capability==='video'?'视频':'图片'}创作</span><p>${escape(message.mediaHandoff.prompt.slice(0,200))}</p></div><button class="primary-small" type="button" data-media-handoff="${escape(message.id)}">前往${message.mediaHandoff.capability==='video'?'视频':'图片'}创作 ↗</button></div>` : '';
-      return `<div class="message-row"><img class="message-avatar" src="ding-xiaosui-fluffy.webp" alt="丁小穗"><div class="message-content"><p class="message-text">${escape(message.text)}</p>${cards}${proposal}${mediaOutput}${mediaLink}${knowledgeReferenceMarkup(message.knowledge)}${message.references?.length?`<p class="sheet-intro">可核对的参考来源</p><div class="message-actions">${referenceLinks(message.references)}</div>`:''}<div class="message-meta">${message.source ? `<span class="source-chip">${escape(message.source)}</span>` : ''}${message.provider ? `<span>${escape(message.provider)}</span>` : ''}</div><div class="message-actions">${artifactActions}${message.templateTask ? `<button class="small-action" data-template="${escape(message.id)}">记下这次需求</button>` : ''}${message.text ? `<button class="small-action" data-copy-message="${escape(message.id)}">复制回答</button>` : ''}</div></div></div>`;
-    }).join('') + (busy ? '<div class="message-row"><img class="message-avatar" src="ding-xiaosui-fluffy.webp" alt=""><div class="typing" role="status" aria-label="丁小穗正在整理"><i></i><i></i><i></i></div></div>' : '');
+      return `<div class="message-row"><img class="message-avatar" src="ding-xiaosui-fluffy.webp" alt="丁小穗"><div class="message-content"><p class="message-text">${escape(message.text)}</p>${cards}${proposal}${mediaOutput}${mediaLink}${knowledgeReferenceMarkup(message.knowledge)}${message.references?.length?`<p class="sheet-intro">可核对的参考来源</p><div class="message-actions">${referenceLinks(message.references)}</div>`:''}<div class="message-meta">${message.source ? `<span class="source-chip">${escape(message.source)}</span>` : ''}${message.provider ? `<span>${escape(message.provider)}</span>` : ''}</div><div class="message-actions">${artifactActions}${retry}${message.templateTask ? `<button class="small-action" data-template="${escape(message.id)}">记下这次需求</button>` : ''}${message.text ? `<button class="small-action" data-copy-message="${escape(message.id)}">复制回答</button>` : ''}</div></div></div>`;
+    }).join('') + (busy ? '<div class="message-row"><img class="message-avatar" src="ding-xiaosui-fluffy.webp" alt=""><div class="message-content"><div class="typing" role="status" aria-label="正在生成，请稍候"><i></i><i></i><i></i></div><p class="message-text">正在生成，请稍候。文案通常一分钟内完成；图片大约几十秒。视频一般 1–3 分钟，高清视频可能要 2–8 分钟，这是正常的。只有成功交付才扣次数，失败会自动退回。</p></div></div>' : '');
   }
   const mediaStatus = status => ({submitting:'提交中',queued:'等待生成',running:'正在生成',saving:'已生成，正在保存',succeeded:'生成完成',failed:'生成失败',unknown:'结果待核对'})[status] || '状态待核对';
   function mediaMarkup(job) {
     const safe = value => typeof value === 'string' && (/^\/api\/media\/assets\//.test(value) || /^https:\/\//.test(value)) ? escape(value) : '';
-    return `<div class="results-grid"><article class="result-card"><span class="result-label">${job.capability === 'video' ? '视频' : '图片'}任务</span><h3>${escape(mediaStatus(job.status))}</h3>${(job.outputs || []).map(item => safe(item.url) ? `${job.capability === 'video' ? `<video controls playsinline src="${safe(item.url)}"></video>` : `<img src="${safe(item.url)}" alt="生成的农品创作图片">`}<a class="small-action" href="${safe(item.url)}" target="_blank" rel="noopener">打开并保存原文件 ↗</a>${item.persisted === false ? '<p>临时链接，请及时保存。</p>' : ''}` : '').join('')}<p>${escape(job.error || '生成内容请核对实物、包装和文字后使用。')}</p><button class="small-action" data-refresh-job="${escape(job.id)}">刷新任务状态</button></article></div>`;
+    const waiting = ['submitting','queued','running','saving'].includes(job.status);
+    const failed = job.status === 'failed';
+    return `<div class="results-grid"><article class="result-card"><span class="result-label">${job.capability === 'video' ? '视频' : '图片'}任务</span><h3>${escape(mediaStatus(job.status))}${Number.isInteger(job.progress) ? ` · ${job.progress}%` : ''}</h3>${waiting ? `<p>${escape(job.hint || (job.capability === 'video' ? '视频正在生成。普通视频大约 1–3 分钟，高清视频大约 2–8 分钟。成功后才扣次数。' : '图片正在生成，请稍候。成功后才扣次数。'))}</p>` : ''}${(job.outputs || []).map(item => safe(item.url) ? `${job.capability === 'video' ? `<video controls playsinline src="${safe(item.url)}"></video>` : `<img src="${safe(item.url)}" alt="生成的农品创作图片">`}<a class="small-action" href="${safe(item.url)}" target="_blank" rel="noopener">打开并保存原文件 ↗</a>${item.persisted === false ? '<p>临时链接，请及时保存。</p>' : ''}` : '').join('')}<p>${escape(job.error || (waiting ? '' : '生成内容请核对实物、包装和文字后使用。'))}</p><button class="small-action" data-refresh-job="${escape(job.id)}">${waiting ? '查看进度' : '刷新任务状态'}</button>${failed ? `<button class="small-action" data-retry-media="${escape(job.id)}" data-media-capability="${escape(job.capability || 'image')}" data-media-prompt="${escape(job.prompt || '')}">重新生成</button>` : ''}</article></div>`;
   }
   function response(thread, value) {
     const message = { id: ids(), role: 'assistant', createdAt: now(), ...value };
@@ -134,7 +137,7 @@
     if (/加入|开始|OPC/i.test(question)) return '咱们可以先从一款农品、一件想做的事开始。想做品牌介绍、朋友圈文案，还是 PPT？说一句就行。\n\nOPC 在这里说的是一个人借助 AI 开展经营的方式。我是虚拟 AI 伙伴，帮你整理资料、策划内容和安排工作；供货、合作与履约还需要你核实。账号资料可以慢慢补齐，不用一次填全。';
     return '我是丁小穗，紫丁香计划的虚拟 AI 新农人，也是陪你做农品品牌的经营伙伴。\n\n我想帮更多农品经营者把自家的好东西讲清楚。咱们实在说农品，认真做品牌；拿不准的，我会问一句。\n\n想做宣传文案、品牌定位、农品 PPT 大纲，还是农业模特和新农人账号策划？选好场景，说出品牌名字就能开始；也可以直接说想做啥。正式稿我按用途写，资料缺什么，咱们慢慢补。\n\n紫丁香计划由山西农业大学智能传播研究院发起。登录后，资料按账号保存；文字生成是否可用，以输入框下方的服务状态为准。';
   }
-  async function send(raw) {
+  async function send(raw, retry) {
     const question = String(raw || '').trim(); if (!question || busy) return;
     if (question.length > 6000) { toast('这次内容请控制在 6000 字以内'); return; }
     const routed = D.route(question, taskId);
@@ -144,7 +147,9 @@
     let thread;
     try { thread = ensureThread(question); } catch (error) { toast(error.message); return; }
     if (thread.messages.length > 96) { toast('这段对话已很长，请开启新对话，历史仍会保留'); return; }
-    thread.messages.push({ id: ids(), role: 'user', text: question, createdAt: now() });
+    if (!retry) thread.messages.push({ id: ids(), role: 'user', text: question, createdAt: now() });
+    if (retry?.taskId) taskId = retry.taskId;
+    const requestId = retry?.requestId || thread.messages.at(-1).id;
     if (!persist()) { render(); return; }
     $('#question').value = '';
     if(intent.kind==='github'){response(thread,{text:'已展开写作与办公场景，包括 PPT 大纲、农品介绍翻译、文案润色与会议纪要。选择后补充原始资料即可。',source:'写作与办公 · 未调用模型'});openWorkMethods();return;}
@@ -167,6 +172,9 @@
     if (intent.kind === 'plan') { proposePlan(thread, question); return; }
     if(requestedMedia){proposeMedia(thread,question,requestedMedia);return;}
     const product = D.matchProduct(question, state) || state.products.find(row => row.id === thread.productId);
+    const history = Array.isArray(retry?.history) ? retry.history : thread.messages.slice(0,-1).slice(-6).map(({role,text})=>({role,text:String(text||'').slice(0,800)}));
+    const requestTask = retry ? (retry.taskId || '') : taskId;
+    const productId = retry ? (retry.productId || '') : (product?.id || '');
     if (!connected || !owner) {
       response(thread, { text: `${product ? `已找到「${product.name}」的农品资料。` : ''}${owner ? (modelReason || '当前账号的文字模型尚未连接。资料查询、农品建档和发布安排可以直接使用；连接服务后，我就能按这些资料完成创作。') : '我可以先帮你找资料、整理农品和安排工作。使用模型创作前，请先登录账号。'}${['translate','general'].includes(intent.taskId) ? '' : '\n\n也可以先记下这次需求，服务恢复后接着做。'}`, templateTask: ['translate','general'].includes(intent.taskId) ? null : intent.taskId, original: question, productId: product?.id, source: '服务状态说明' }); return;
     }
@@ -175,11 +183,17 @@
       await window.zdxStorage.sync.flush();
       const sync = window.zdxStorage.sync.status();
       if (sync.dirty || ['conflict','stale','remote','auth'].includes(sync.phase)) throw Error('请先完成页面顶部的同步处理，再使用最新资料创作');
-      const result = await fetch('/api/dialogue', { method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-zdx-workspace-owner':owner.id},signal:controller.signal,body:JSON.stringify({ message:question, requestId:thread.messages.at(-1).id, taskId, productId:product?.id||'', threadId:thread.id, consent:true, revision:sync.revision, history:thread.messages.slice(0,-1).slice(-6).map(({role,text})=>({role,text:text.slice(0,800)})) }) });
-      const value = await result.json(); if (!result.ok) throw Error(value.error || '暂时没有取得回答，请稍后重试');
+      const result = await fetch('/api/dialogue', { method:'POST',credentials:'same-origin',headers:{'content-type':'application/json','x-zdx-workspace-owner':owner.id},signal:controller.signal,body:JSON.stringify({ message:question, requestId, taskId:requestTask, productId, threadId:thread.id, consent:true, revision:sync.revision, history }) });
+      let value = {}; try { value = await result.json(); } catch { throw Object.assign(Error('生成时间较长，服务器还没有返回结果。请点“重试本次”，不会重复扣次。'), { name: 'TimeoutError' }); }
+      if (!result.ok) throw Error(value.error || '暂时没有取得回答，请稍后重试');
       busy = false;
       response(thread, { text:value.answer, references:value.references, knowledge:value.knowledge, source: sourceLabel(value.source), provider:value.provider, artifact:{title:value.title,taskId:value.taskId,productId:product?.id || '',channel:channelFor(value.taskId)} });
-    } catch (error) { busy = false; response(thread, { text:error.name==='AbortError' ? '已停止等待这次回答。模型请求可能已经开始，请先核对结果，再决定是否重新提交。' : error.message, source:'本次未取得有效模型结果' }); }
+    } catch (error) {
+      busy = false;
+      const timedOut = error.name === 'AbortError' || error.name === 'TimeoutError' || /超时|尚未返回|仍在处理|不完整/.test(error.message || '');
+      const text = error.name === 'AbortError' ? '已停止等待。如果模型已经开始生成，请点“重试本次”，会沿用同一次请求，不会重复扣次。' : (error.message || '暂时没有取得回答');
+      response(thread, { text: timedOut || !error.message ? `${text} 失败或中断不会多扣次数；若次数已预留，重试原任务即可。` : text, source:'本次未取得有效模型结果', ...(timedOut ? { retry: { requestId, question, taskId:requestTask, productId, history } } : {}) });
+    }
     finally { busy=false;controller=null;await refreshCredits();render(); }
   }
   const channelFor = id => ({moments:'朋友圈',xiaohongshu:'小红书',script:'视频号',article:'公众号'})[id] || '朋友圈';
@@ -343,6 +357,8 @@
     if(button.dataset.planDraft){const draft=state.drafts.find(row=>row.id===button.dataset.planDraft);if(!draft)return;closeSheet();taskId='general';if(active())active().selectedDraftId=draft.id;$('#selected-tool').textContent='自动判断';$('#question').value=`安排明天发布「${draft.title}」`;$('#question').focus();return;}
     if(button.dataset.confirm){void confirmProposal(button.dataset.confirm);return;}
     if(button.dataset.refreshJob){void refreshJob(button.dataset.refreshJob);return;}
+    if(button.dataset.retryMessage){const message=active()?.messages.find(item=>item.id===button.dataset.retryMessage);if(message?.retry)void send(message.retry.question,message.retry);return;}
+    if(button.dataset.retryMedia){void fetch('/api/media/jobs',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({capability:button.dataset.mediaCapability||'image',modelId:null,prompt:button.dataset.mediaPrompt||'',consent:true,idempotencyKey:crypto.randomUUID().replace(/-/g,'')+crypto.randomUUID().replace(/-/g,'').slice(0,8)})}).then(async response=>{const body=await response.json();if(!response.ok)throw Error(body.error||'没有重新提交');toast(body.job?.status==='failed'?'重新生成没有成功，次数已退回':'已重新提交，成功后才会扣次数');void refreshJob(body.job.id);}).catch(error=>toast(error.message));return;}
     const id=button.dataset.saveMessage||button.dataset.officeMessage||button.dataset.copyMessage||button.dataset.revise||button.dataset.template;
     const message=active()?.messages.find(item=>item.id===id);if(!message)return;
     if(button.dataset.saveMessage)proposeSave(active(),message,'drafts');else if(button.dataset.officeMessage)proposeSave(active(),message,'office');else if(button.dataset.copyMessage)navigator.clipboard.writeText(message.text).then(()=>toast('回答已复制')).catch(()=>toast('未能复制，请手动选中文字'));else if(button.dataset.revise){taskId=message.artifact?.taskId||'general';$('#question').value='把刚才这份内容改成：';$('#question').focus();}else if(button.dataset.template)template(message);

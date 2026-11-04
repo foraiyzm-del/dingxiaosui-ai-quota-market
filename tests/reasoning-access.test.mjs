@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { textPayload } from '../sidecar/generation-options.mjs';
 import { createChannels } from '../sidecar/channels.mjs';
 import { createGeneration } from '../sidecar/generation.mjs';
-import { LEADER_PROFILE } from '../sidecar/model-tiers.mjs';
+import { LEADER_PROFILE, VIDEO_WAIT_MS, fallbackChain, modelTimeoutMs } from '../sidecar/model-tiers.mjs';
 import { describeMissingModels, missingLeaderModels, modelIds } from '../sidecar/model-access.mjs';
 import { createPlatforms } from '../sidecar/platforms.mjs';
 import { createQuota } from '../sidecar/quota.mjs';
@@ -36,8 +36,17 @@ test('deepseek thinking is disabled and claude does not request extended thinkin
   assert.deepEqual(deepseek.thinking, { type: 'disabled' });
   const claude = textPayload({ prompt: '写一句', capability: 'text' }, 'claude-sonnet-5-5', 1024);
   assert.equal(claude.reasoning_effort, 'none');
-  assert.equal(claude.thinking, undefined);
+  assert.equal(Object.hasOwn(claude, 'thinking'), false);
   assert.equal(claude.model, 'claude-sonnet-5-5');
+});
+
+test('high-definition video waits more than five minutes and ordinary cards stay off the leader fallback', () => {
+  assert.ok(VIDEO_WAIT_MS > 5 * 60 * 1000);
+  assert.equal(modelTimeoutMs('seedance-2.5', 120000), VIDEO_WAIT_MS);
+  assert.equal(modelTimeoutMs('seedance-2.0', 120000), VIDEO_WAIT_MS);
+  assert.deepEqual(fallbackChain('video', 'seedance-2.0-mini', 'seedance-2.0'), []);
+  assert.deepEqual(fallbackChain('video', 'seedance-2.0-mini', undefined, 'standard'), []);
+  assert.deepEqual(fallbackChain('video', 'seedance-2.5', 'seedance-2.0', 'leader').map(step => step.model), ['seedance-2.0', 'seedance-2.0-mini']);
 });
 
 test('reasoning tokens are billed as output when the gateway reports them separately', async t => {
@@ -55,7 +64,7 @@ test('a model-permission 403 walks the whole chain without failing the user or c
   const calls = [];
   const { db, quota, generation } = setup(t, async (_url, init) => {
     const body = JSON.parse(init.body);
-    calls.push({ model: body.model, resolution: body.resolution, reasoning: body.reasoning_effort, thinking: body.thinking?.type });
+    calls.push({ model: body.model, resolution: body.resolution, reasoning: body.reasoning_effort, thinking: body.thinking?.type, hasThinking: Object.hasOwn(body, 'thinking') });
     if (body.model === 'claude-sonnet-5-5' || body.model === 'seedance-2.5' || body.model === 'seedance-2.0') return denied(body.model);
     if (body.model === 'seedance-2.0-mini' && body.resolution === '720p') return new Response(JSON.stringify({ error: { message: 'unsupported resolution 720p' } }), { status: 400, headers: { 'content-type': 'application/json' } });
     if (body.model === 'seedance-2.0-mini') return json({ code: 200, data: [{ task_id: 'mini-ok', status: 'submitted' }] });
@@ -70,7 +79,7 @@ test('a model-permission 403 walks the whole chain without failing the user or c
   assert.equal(calls.filter(call => call.model === 'claude-sonnet-5-5').length, 1);
   assert.equal(calls.filter(call => call.model === 'deepseek-v4.1-flash').length, 1);
   assert.equal(calls.find(call => call.model === 'claude-sonnet-5-5').reasoning, 'none');
-  assert.equal(calls.find(call => call.model === 'claude-sonnet-5-5').thinking, undefined);
+  assert.equal(calls.find(call => call.model === 'claude-sonnet-5-5').hasThinking, false);
   assert.equal(calls.find(call => call.model === 'deepseek-v4.1-flash').thinking, 'disabled');
   const video = await generation.execute({ projectId: 'dingxiaosui', userId: 'boss', requestId: 'video', capability: 'video', prompt: '领导视频' });
   assert.equal(video.status, 'running');

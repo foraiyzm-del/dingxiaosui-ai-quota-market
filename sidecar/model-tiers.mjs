@@ -52,18 +52,32 @@ export const LEADER_MODEL_IDS = Object.freeze([
   'claude-sonnet-5-5', 'gpt-image-2.5-flare', 'seedance-2.5', 'seedance-2.0', 'seedance-2.0-mini', 'deepseek-v4.1-flash',
 ]);
 
-export function fallbackChain(capability, primary, configured) {
+const STANDARD_TEXT = new Set(['deepseek-v4.1-flash', 'deepseek-v4-flash']);
+const STANDARD_VIDEO = new Set(['seedance-2.0-mini']);
+// Live seedance-2.5 720p clips return in about three minutes. Wait past five minutes.
+export const VIDEO_WAIT_MS = 8 * 60 * 1000;
+
+export function fallbackChain(capability, primary, configured, tier = 'standard') {
   const configuredModel = typeof configured === 'string' ? configured : configured?.model;
+  const leader = tier === 'leader';
   const steps = [];
-  const push = step => { if (step.model && step.model !== primary && !steps.some(item => item.model === step.model)) steps.push(step); };
+  const allowed = capability === 'text' ? (leader ? null : STANDARD_TEXT) : capability === 'video' ? (leader ? null : STANDARD_VIDEO) : null;
+  const push = step => {
+    if (!step.model || step.model === primary || steps.some(item => item.model === step.model)) return;
+    if (allowed && !allowed.has(step.model)) return;
+    steps.push(step);
+  };
   if (capability === 'text') {
+    if (!leader && !configuredModel) return steps;
     push({ model: configuredModel || 'deepseek-v4.1-flash' });
-    push({ model: 'deepseek-v4.1-flash' });
-  } else if (capability === 'video') {
+    if (leader) push({ model: 'deepseek-v4.1-flash' });
+  } else if (capability === 'video' && leader) {
     push({ model: configuredModel || 'seedance-2.0', resolution: '720p' });
     push({ model: 'seedance-2.0', resolution: '720p' });
     // Mini is the last model this key is known to allow. Try the sold 720p first.
     push({ model: 'seedance-2.0-mini', resolution: '720p', resolutionFallback: '480p' });
+  } else if (capability === 'video' && configuredModel) {
+    push({ model: configuredModel, resolution: '480p' });
   }
   return steps;
 }
@@ -95,6 +109,7 @@ export function modelPricing(model) {
 }
 
 export function modelTimeoutMs(model, configured = 120000) {
-  const floor = model === 'claude-sonnet-5-5' ? 240000 : model === 'seedance-2.5' || model === 'seedance-2.0' ? 180000 : configured;
-  return Math.min(300000, Math.max(configured, floor));
+  const video = model === 'seedance-2.5' || model === 'seedance-2.0';
+  const floor = model === 'claude-sonnet-5-5' ? 240000 : video ? VIDEO_WAIT_MS : configured;
+  return Math.min(video ? VIDEO_WAIT_MS : 300000, Math.max(configured, floor));
 }

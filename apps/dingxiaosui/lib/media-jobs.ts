@@ -190,7 +190,7 @@ async function createQuotaMediaJob(user:Actor,options:CreateOptions,key:string,h
  catch(error){const concurrent=await db().prepare('SELECT * FROM media_jobs WHERE user_id=? AND idempotency_key=?').bind(user.id,key).first<JobRow>();if(!concurrent)throw error;if(concurrent.request_hash!==hash)throw new ApiError(409,'该任务标识已对应另一份内容');return {job:publicJob(concurrent),created:false};}
  const row=await ownedMediaJob(user.id,id);
  try{
-  const result=verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generate',payload,{timeoutMs:options.capability==='video'?180000:130000}),account.centerUserId,row.capability);
+  const result=verifyQuotaJob(await quotaCenterRequest<QuotaJob>('/generate',payload,{timeoutMs:options.capability==='video'?480000:130000}),account.centerUserId,row.capability);
   await acceptQuotaResult(row,result);
  }catch(error){
   const current=await ownedMediaJob(user.id,id);

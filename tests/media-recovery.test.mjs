@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { downloadVerdict, nextDeliveryState, quotaJobUpdateSql, quotaSweepWhere } from '../apps/dingxiaosui/lib/quota-media-recovery.ts';
@@ -54,4 +55,8 @@ test('a dropped delivery stays pending and the next accept settles the same job'
   db.prepare("INSERT INTO media_jobs(id,provider_kind,capability,status,delivery_state,key_cipher,poll_after) VALUES ('done','quota-center','image','succeeded','delivered','',?)").run(now);
   const due = db.prepare(`SELECT id FROM media_jobs WHERE ${quotaSweepWhere} ORDER BY id`).all(now + 1).map(row => row.id);
   assert.deepEqual(due, ['saved']);
+  const jobsSource = readFileSync(new URL('../apps/dingxiaosui/lib/media-jobs.ts', import.meta.url), 'utf8');
+  assert.match(jobsSource, /downloadVerdict/);
+  assert.match(jobsSource, /quotaSweepWhere/);
+  assert.match(jobsSource, /deliverSavedQuota/);
 });

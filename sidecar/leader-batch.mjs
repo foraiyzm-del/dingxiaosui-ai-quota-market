@@ -32,7 +32,7 @@ export function issueLeaderBatch({ quota, channels, platforms, commerce, budgets
   const added = [];
   for (const capability of needed) {
     const binding = platform.bindings.find(item => item.capability === capability);
-    const models = [LEADER_PROFILE.models[capability], ...fallbackChain(capability, LEADER_PROFILE.models[capability], LEADER_PROFILE.fallbacks[capability]).map(step => step.model)];
+    const models = [LEADER_PROFILE.models[capability], ...fallbackChain(capability, LEADER_PROFILE.models[capability], LEADER_PROFILE.fallbacks[capability], 'leader').map(step => step.model)];
     for (const model of models) if (ensureModel(channels, binding.channelId, capability, model)) added.push(model);
   }
   const bindingsAfter = platforms.getPlatform(PROJECT_ID).bindings.map(binding => ({ capability: binding.capability, model: binding.model, channelId: binding.channelId }));
