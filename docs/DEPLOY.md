@@ -196,6 +196,8 @@ CENTER_URL=http://127.0.0.1:3199 DING_URL=http://127.0.0.1:8845 node scripts/pro
 node scripts/issue-leader-cards.mjs --quantity 120 --days 90 --origin https://丁小穗域名
 ```
 
+制卡前会用 APIMart 的模型列表检查这把密钥有没有领导卡要用的模型。没有权限时会用中文写出缺哪几个，并停下来。密钥已经能用保底模型、只是高配还没开通时，可以加 `--allow-missing-models` 先把卡印出来，生成时会自动改用已开通的模型。
+
 如果渠道里已经登记过发码额度，而这批卡需要的次数不够，命令会停下来并写明还差多少。确认要自动补上差额时再加 `--top-up`。已经做过一批又要再做，加 `--force`。
 
 命令成功后，在 `local/leader-cards/` 里会有：
