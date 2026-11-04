@@ -32,7 +32,7 @@
 
 为避免上游自动选择昂贵规格，三个测试模型使用明确参数：
 
-- 文案：非流式，`max_tokens: 1024`。
+- 文案：非流式，`max_tokens: 1024`。`deepseek-v4.1-flash` 默认会先做高强度推理，请求里显式带 `reasoning_effort: "none"` 和 `thinking: { type: "disabled" }`，避免正文出来前先耗掉几十秒和大量推理 token。`claude-sonnet-5-5` 不使用带 `-thinking` 的模型名，也不打开 extended thinking，只带 `reasoning_effort: "none"`，避免网关自行打开长推理。推理 token 若出现在用量里，按输出单价计入估算。
 - GPT Image 2.5：每次一张，`size: "1:1"`、`resolution: "1k"`、`quality: "low"`，即 1024 × 1024 方图。
 - Seedance 2.0：`duration: 5`、`resolution: "480p"`、`size: "16:9"`、`generate_audio: false`。
 

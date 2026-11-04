@@ -8,10 +8,25 @@ export const FX_CNY_PER_USD = 7.2;
 // Published APIMart gold-style reference prices used only to reserve budget.
 // Text assumes a typical brief: 2000 input tokens and 1500 output tokens.
 export const UNIT_COST_USD = Object.freeze({
-  text: Object.freeze({ inputPerMillion: 1.6, outputPerMillion: 8, referenceInputTokens: 2000, referenceOutputTokens: 1500 }),
+  // Reasoning tokens are billed as output. With thinking disabled the reference is 0;
+  // a real response that still reports them is added in the per-job estimate.
+  text: Object.freeze({ inputPerMillion: 1.6, outputPerMillion: 8, referenceInputTokens: 2000, referenceOutputTokens: 1500, referenceReasoningTokens: 0 }),
   image: Object.freeze({ perRequest: 0.01 }),
   video: Object.freeze({ perRequest: 1.08 }),
 });
+
+// DeepSeek V4 enables high-effort thinking unless the request turns it off.
+// Claude extended thinking stays off unless the request sends a thinking block
+// or a "-thinking" model id. Both are explicit so a gateway default cannot add a long chain of thought.
+export const TEXT_REASONING = Object.freeze({
+  'deepseek-v4.1-flash': Object.freeze({ reasoning_effort: 'none', thinking: Object.freeze({ type: 'disabled' }) }),
+  'deepseek-v4-flash': Object.freeze({ reasoning_effort: 'none', thinking: Object.freeze({ type: 'disabled' }) }),
+  'claude-sonnet-5-5': Object.freeze({ reasoning_effort: 'none' }),
+});
+
+export function reasoningControls(model) {
+  return TEXT_REASONING[model] || null;
+}
 
 export const LEADER_PROFILE = Object.freeze({
   tier: 'leader',
@@ -28,7 +43,29 @@ export const STANDARD_PROFILE = Object.freeze({
 });
 
 export function textCallUsd(cost = UNIT_COST_USD.text) {
-  return (cost.referenceInputTokens * cost.inputPerMillion + cost.referenceOutputTokens * cost.outputPerMillion) / 1_000_000;
+  const outputTokens = (cost.referenceOutputTokens || 0) + (cost.referenceReasoningTokens || 0);
+  return (cost.referenceInputTokens * cost.inputPerMillion + outputTokens * cost.outputPerMillion) / 1_000_000;
+}
+
+/** Models a leader card may call, including the degradation chain. */
+export const LEADER_MODEL_IDS = Object.freeze([
+  'claude-sonnet-5-5', 'gpt-image-2.5-flare', 'seedance-2.5', 'seedance-2.0', 'seedance-2.0-mini', 'deepseek-v4.1-flash',
+]);
+
+export function fallbackChain(capability, primary, configured) {
+  const configuredModel = typeof configured === 'string' ? configured : configured?.model;
+  const steps = [];
+  const push = step => { if (step.model && step.model !== primary && !steps.some(item => item.model === step.model)) steps.push(step); };
+  if (capability === 'text') {
+    push({ model: configuredModel || 'deepseek-v4.1-flash' });
+    push({ model: 'deepseek-v4.1-flash' });
+  } else if (capability === 'video') {
+    push({ model: configuredModel || 'seedance-2.0', resolution: '720p' });
+    push({ model: 'seedance-2.0', resolution: '720p' });
+    // Mini is the last model this key is known to allow. Try the sold 720p first.
+    push({ model: 'seedance-2.0-mini', resolution: '720p', resolutionFallback: '480p' });
+  }
+  return steps;
 }
 
 export function batchUpstreamCost(cards, quota = LEADER_QUOTA) {
@@ -41,7 +78,7 @@ export function batchUpstreamCost(cards, quota = LEADER_QUOTA) {
     cny: Math.round(usd * FX_CNY_PER_USD * 100) / 100,
     counts: { text: quota.text * cards, image: quota.image * cards, video: quota.video * cards },
     assumptions: {
-      textTokens: { input: UNIT_COST_USD.text.referenceInputTokens, output: UNIT_COST_USD.text.referenceOutputTokens },
+      textTokens: { input: UNIT_COST_USD.text.referenceInputTokens, output: UNIT_COST_USD.text.referenceOutputTokens, reasoning: UNIT_COST_USD.text.referenceReasoningTokens },
       imageUsd: UNIT_COST_USD.image.perRequest,
       videoUsd: UNIT_COST_USD.video.perRequest,
       fx: FX_CNY_PER_USD,

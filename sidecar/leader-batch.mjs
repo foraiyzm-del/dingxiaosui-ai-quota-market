@@ -1,4 +1,4 @@
-import { LEADER_CARD_COUNT, LEADER_PROFILE, LEADER_QUOTA, LEADER_SPARE_COUNT, LEADER_VALID_DAYS, batchUpstreamCost, modelPricing } from './model-tiers.mjs';
+import { LEADER_CARD_COUNT, LEADER_PROFILE, LEADER_QUOTA, LEADER_SPARE_COUNT, LEADER_VALID_DAYS, batchUpstreamCost, fallbackChain, modelPricing } from './model-tiers.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const PROJECT_ID = 'dingxiaosui';
@@ -32,10 +32,8 @@ export function issueLeaderBatch({ quota, channels, platforms, commerce, budgets
   const added = [];
   for (const capability of needed) {
     const binding = platform.bindings.find(item => item.capability === capability);
-    const model = LEADER_PROFILE.models[capability];
-    if (ensureModel(channels, binding.channelId, capability, model)) added.push(model);
-    const fallback = LEADER_PROFILE.fallbacks[capability];
-    if (fallback && ensureModel(channels, binding.channelId, capability, fallback)) added.push(fallback);
+    const models = [LEADER_PROFILE.models[capability], ...fallbackChain(capability, LEADER_PROFILE.models[capability], LEADER_PROFILE.fallbacks[capability]).map(step => step.model)];
+    for (const model of models) if (ensureModel(channels, binding.channelId, capability, model)) added.push(model);
   }
   const bindingsAfter = platforms.getPlatform(PROJECT_ID).bindings.map(binding => ({ capability: binding.capability, model: binding.model, channelId: binding.channelId }));
   const quote = leaderQuote(quantity);
