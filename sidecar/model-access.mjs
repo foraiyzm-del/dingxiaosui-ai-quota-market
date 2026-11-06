@@ -1,4 +1,5 @@
 import { LEADER_MODEL_IDS } from './model-tiers.mjs';
+import { withApimartRelayAuth } from './apimart-relay-auth.mjs';
 
 const labels = {
   'claude-sonnet-5-5': '文案 claude-sonnet-5-5',
@@ -29,7 +30,7 @@ export function describeMissingModels(missing) {
 
 export async function listAccessibleModels({ baseUrl, apiKey, fetchImpl = fetch } = {}) {
   const root = String(baseUrl || '').replace(/\/$/, '');
-  const response = await fetchImpl(`${root}/models`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15000) });
+  const response = await fetchImpl(`${root}/models`, withApimartRelayAuth(`${root}/models`, { headers: { Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(15000) }));
   if (!response.ok) {
     const error = new Error(`模型列表接口返回 HTTP ${response.status}`);
     error.status = response.status;

@@ -36,6 +36,8 @@ async function failure(response:Response):Promise<never>{
 }
 export function normalizeActivationCode(value:string){
  const compact=value.trim().toUpperCase().replace(/[\s-]+/g,'');
+ // The original printed cards use the bare short code as their persistent HMAC identity.
+ if(/^[2-9A-HJKMNP-Z]{10}$/.test(compact))return compact;
  if(/^QTA[0-9A-F]{36}$/.test(compact))return `QTA-${compact.slice(3)}`;
  if(/^QTA[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{16}$/.test(compact)){const body=compact.slice(3);return `QTA-${body.slice(0,4)}-${body.slice(4,8)}-${body.slice(8,12)}-${body.slice(12)}`;}
  throw new ApiError(400,'激活码格式不正确，请按卡面上的分组核对，横线、空格和大小写都可以');
