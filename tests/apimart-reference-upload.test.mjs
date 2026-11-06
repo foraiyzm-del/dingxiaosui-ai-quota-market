@@ -58,6 +58,7 @@ for (const [label, uploadedUrl] of [['original', legacyUrl], ['current', current
       if (url.endsWith('/uploads/images')) {
         uploads++; assert.ok(Buffer.isBuffer(init.body)); assert.ok(init.body.includes(png));
         assert.match(init.headers['Content-Type'], /^multipart\/form-data; boundary=/u);
+        assert.equal(init.headers['Content-Length'], String(init.body.length));
         return Response.json({ url: uploadedUrl });
       }
       assert.equal(url, 'https://api.apimart.ai/v1/images/generations'); generations++;
@@ -84,28 +85,31 @@ const failures = [
   ['timeout exception', 'timeout', () => { throw Object.assign(new Error(key), { name: 'TimeoutError' }); }],
   ['Node abort timeout cause', 'timeout', () => { throw Object.assign(new Error(key), { code: 'ABORT_ERR', cause: { name: 'TimeoutError' } }); }],
   ['oversized response', 'json', () => { throw Object.assign(new Error(key), { code: 'UPSTREAM_RESPONSE_TOO_LARGE' }); }],
+  ['oversized response with timeout cause', 'json', () => { throw Object.assign(new Error(key), { code: 'UPSTREAM_RESPONSE_TOO_LARGE', cause: { name: 'TimeoutError' } }); }],
 ];
 for (const [label, category, response] of failures) {
-  test(`${label} cancels its hold, never generates or retries, and writes only safe diagnostic fields`, async t => {
+  test(`${label} cancels its hold after bounded upload attempts, never generates, and writes only safe diagnostics`, async t => {
     let uploads = 0;
     const { db, quota, generation, input } = fixture(t, async url => {
       assert.equal(url, 'https://api.apimart.ai/v1/uploads/images'); uploads++; return response();
     });
     const job = await generation.execute(input);
     assert.equal(job.status, 'failed'); assert.match(job.error, /尚未开始生成，预留次数已退回/u);
-    assert.equal((await generation.execute(input)).id, job.id); assert.equal(uploads, 1);
+    const attempts = ['network', 'timeout'].includes(category) ? 2 : 1;
+    assert.equal((await generation.execute(input)).id, job.id); assert.equal(uploads, attempts);
     assert.equal(quota.balance(input).available, 3); assert.equal(quota.balance(input).reserved, 0);
     assert.equal(quota.balance(input).consumed, 0);
     assert.equal(db.prepare('SELECT status FROM quota_usage').get().status, 'cancelled');
     assert.equal(db.prepare('SELECT upstream_id FROM generation_jobs').get().upstream_id, null);
-    const audit = db.prepare('SELECT action,detail FROM generation_audit').all(); assert.equal(audit.length, 1);
-    assert.equal(audit[0].action, 'reference.upload_failed');
-    const detail = JSON.parse(audit[0].detail); assert.equal(detail.category, category);
+    const audit = db.prepare('SELECT action,detail FROM generation_audit').all(); assert.equal(audit.length, attempts);
+    assert.equal(audit.at(-1).action, 'reference.upload_failed');
+    if (attempts === 2) assert.equal(audit[0].action, 'reference.upload_retry');
+    const detail = JSON.parse(audit.at(-1).detail); assert.equal(detail.category, category); assert.equal(detail.attempts, attempts);
     assert.equal(Number.isSafeInteger(detail.elapsedMs), true);
     for (const forbidden of [key, relayKey, signedUrl, 'private%2Bsignature', reference]) {
       assert.equal(JSON.stringify({ job, audit }).includes(forbidden), false);
     }
-    assert.ok(Object.keys(detail).every(name => ['category', 'elapsedMs', 'httpStatus', 'networkCode', 'preconnect'].includes(name)));
+    assert.ok(Object.keys(detail).every(name => ['category', 'elapsedMs', 'httpStatus', 'networkCode', 'preconnect', 'attempts', 'transport'].includes(name)));
   });
 }
 
