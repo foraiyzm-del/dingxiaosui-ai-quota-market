@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
+import {createHmac} from 'node:crypto';
 import ts from 'typescript';
 
 const root=path.resolve(import.meta.dirname,'..'),database=new DatabaseSync(':memory:');
@@ -88,6 +89,42 @@ try{
  checks.push('administrator switch validates card first, drops only current admin session and never grants admin rights');
  await sessions.endEventSession(new Request(origin+'/api/event/session',{method:'DELETE',headers:{origin,cookie:repeated.cookie}}));assert.equal(await sessions.eventIdentity(new Headers({cookie:repeated.cookie})),null);assert(await sessions.eventIdentity(new Headers({cookie:restored.cookie})));
  database.prepare("UPDATE users SET status='disabled' WHERE id=?").run(restored.data.user.id);assert.equal(await sessions.eventIdentity(new Headers({cookie:restored.cookie})),null);await assert.rejects(()=>login(card(2)),error=>error.status===403);
- assert.equal(database.prepare('PRAGMA foreign_key_check').all().length,0);checks.push('logout and disabled-account checks preserve session isolation and all foreign keys');
+ checks.push('logout and disabled-account checks preserve session isolation');
+ // Seed the original bare-code HMAC and an existing workspace independently of
+ // today's normalizer. Re-login must recover these records without redeeming.
+ const oldShort='AB23CD45EF',oldUser='existing-short-owner',oldCenter='existing-short-center';
+ const oldHash=createHmac('sha256',env.AI_CONFIG_ENCRYPTION_KEY).update('quota-card:'+oldShort).digest('hex');
+ database.prepare("INSERT INTO users VALUES (?,?,'active',?)").run(oldUser,'Existing short-card user',stamp);
+ database.prepare("INSERT INTO quota_center_accounts(card_hash,user_id,center_user_id,code_id,status,created_at,activated_at,updated_at) VALUES (?,?,?,?,'active',?,?,?)").run(oldHash,oldUser,oldCenter,'existing-short-code',stamp,stamp,stamp);
+ const previousWorkspace=JSON.stringify([{id:'kept-work',title:'Existing card work'}]);
+ database.prepare('INSERT INTO account_workspaces VALUES (?,?,?,?)').run(oldUser,3,previousWorkspace,stamp);
+ const previousBalance=balance(oldCenter);previousBalance.byCapability.text={granted:3,available:1,reserved:0,consumed:2};previousBalance.available=3;previousBalance.consumed=2;balances.set(oldCenter,previousBalance);
+ const beforeShortAttempts=attempts.length,beforeShortUsers=database.prepare('SELECT count(*) n FROM users').get().n;
+ for(const code of [oldShort,' ab23-cd45 ef ', 'a b 2 3 c d 4 5 e f']){
+  assert.equal(quota.normalizeActivationCode(code),oldShort);
+  const restoredShort=await login(code);assert.equal(restoredShort.data.user.id,oldUser);assert.equal(restoredShort.data.creditSource,'quota_center');
+  assert.equal(restoredShort.data.wallet.quotas.find(value=>value.capability==='text').available,1);
+ }
+ assert.equal(attempts.length,beforeShortAttempts);assert.equal(database.prepare('SELECT count(*) n FROM users').get().n,beforeShortUsers);
+ assert.equal(database.prepare('SELECT entries_json FROM account_workspaces WHERE user_id=?').get(oldUser).entries_json,previousWorkspace);
+ assert.equal(database.prepare('SELECT card_hash FROM quota_center_accounts WHERE user_id=?').get(oldUser).card_hash,oldHash);
+ checks.push('original ten-character bare-code HMAC restores the same user, workspace and consumed balance without redemption');
+ const newShort='JK67MN89PQ',shortFirst=await login('jk67-mn89 pq'),shortRepeat=await login(newShort);
+ assert.equal(shortFirst.data.user.id,shortRepeat.data.user.id);assert.notEqual(shortFirst.data.user.id,oldUser);assert.equal(attempts.filter(value=>value.code===newShort).length,1);
+ assert.equal(database.prepare('SELECT card_hash FROM quota_center_accounts WHERE user_id=?').get(shortFirst.data.user.id).card_hash,createHmac('sha256',env.AI_CONFIG_ENCRYPTION_KEY).update('quota-card:'+newShort).digest('hex'));
+ const grouped='QTA-ABCD-EFGH-JKMN-PQRS',groupedFirst=await login(grouped.toLowerCase()),groupedRepeat=await login(grouped.replaceAll('-',''));
+ assert.equal(groupedFirst.data.user.id,groupedRepeat.data.user.id);assert.equal(attempts.filter(value=>value.code===grouped).length,1);
+ const beforeInvalid=attempts.length;
+ for(const code of ['AB23CD450F','AB23CD45OF','AB23CD451F','AB23CD45IF','AB23CD45LF','AB23CD45E','AB23CD45EFF'])await assert.rejects(()=>login(code),error=>error.status===400);
+ assert.equal(attempts.length,beforeInvalid);
+ checks.push('short-card first activation is idempotent, grouped QTA cards still work, malformed short codes never reach the center');
+ // Exercise the actual QR prefill helper without rendering or executing a browser.
+ const pageSource=fs.readFileSync(path.join(root,'app/redeem/page.tsx'),'utf8');
+ const pageAst=ts.createSourceFile('page.tsx',pageSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+ const prefillNode=pageAst.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='prefill');assert(prefillNode);
+ const {prefill}=await import(tsUrl('export '+prefillNode.getText(pageAst)));
+ assert.equal(prefill(' ab23-cd45 ef '),oldShort);assert.equal(prefill(grouped.toLowerCase()),grouped);assert.equal(prefill(card(1).toLowerCase()),card(1));
+ assert.equal(database.prepare('PRAGMA foreign_key_check').all().length,0);
+ checks.push('QR prefill supports short and both QTA formats; all session and account foreign keys remain valid');
  console.log(JSON.stringify({passed:true,checks,scope:'in-memory SQLite and stubbed center; no live model/payment calls'},null,2));
 }finally{globalThis.fetch=originalFetch;database.close();delete globalThis.__quotaIdentityTestEnv;}

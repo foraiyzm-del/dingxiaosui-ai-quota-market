@@ -45,7 +45,8 @@ export async function startEventSession(request:Request,code:unknown,options:{sw
  strictOrigin(request);await limitLogin(request);
  const password=await passwordIdentity(request.headers);
  if(password?.platformAdmin&&!options.switchFromAdmin)throw new ApiError(409,'当前是管理员账号，请点击“退出管理员，使用体验码”继续');
- if(typeof code==='string'&&code.trim().toUpperCase().replace(/[\s-]/g,'').startsWith('QTA'))return startQuotaSession(request,code,!!password&&!!options.switchFromAdmin);
+ const compactCode=typeof code==='string'?code.trim().toUpperCase().replace(/[\s-]/g,''):'';
+ if(compactCode.startsWith('QTA')||/^[2-9A-HJKMNP-Z]{10}$/.test(compactCode))return startQuotaSession(request,code as string,!!password&&!!options.switchFromAdmin);
  const raw=field(code,100,true).replace(/[\s-]/g,'').toUpperCase();
  if(!/^ZDXE[A-F0-9]{32}$/.test(raw))throw new ApiError(400,'激活码格式不正确，请完整复制工作人员提供的码');
  const row=await db().prepare('SELECT c.id,c.batch_id,c.status,c.redeemed_by,b.redeem_before FROM event_activation_codes c JOIN event_activation_batches b ON b.id=c.batch_id WHERE c.code_hash=?').bind(await digest(raw)).first<{id:string;batch_id:string;status:string;redeemed_by:string|null;redeem_before:string|null}>();

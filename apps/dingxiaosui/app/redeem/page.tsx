@@ -3,6 +3,7 @@ import {useEffect,useState} from 'react';
 
 function prefill(raw: string) {
   const compact = raw.trim().toUpperCase().replace(/[\s-]+/g, '');
+  if (/^[2-9A-HJKMNP-Z]{10}$/.test(compact)) return compact;
   if (/^QTA[0-9A-F]{36}$/.test(compact)) return `QTA-${compact.slice(3)}`;
   if (/^QTA[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{16}$/.test(compact)) {
     const body = compact.slice(3);
