@@ -103,7 +103,7 @@ export function batchUpstreamCost(cards, quota = LEADER_QUOTA) {
 export function modelPricing(model) {
   if (model === 'claude-sonnet-5-5') return { inputPerMillionCents: 160, outputPerMillionCents: 800 };
   if (model === 'deepseek-v4.1-flash') return { inputPerMillionCents: 22.86, outputPerMillionCents: 91.43 };
-  if (model === 'seedance-2.5') return { perRequestCents: 108 };
+  if (model === 'seedance-2.5') return { perRequestCents: 108, referenceSeconds: 5 };
   if (model === 'gpt-image-2.5-flare') return { perRequestCents: 1 };
   return null;
 }

@@ -1,9 +1,10 @@
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/u;
+export const VIDEO_DURATION_OPTIONS = Object.freeze([5, 10, 15]);
 
 function videoSpec(video) {
   if (!video || typeof video !== 'object' || Array.isArray(video)) fail(400, '视频规格格式无效');
-  if (video.seconds !== 5 && video.seconds !== 15) fail(400, '视频售卖时长只允许 5 秒或 15 秒');
+  if (!VIDEO_DURATION_OPTIONS.includes(video.seconds)) fail(400, '视频默认时长只允许 5 秒、10 秒或 15 秒');
   if (video.resolution !== '480p' && video.resolution !== '720p') fail(400, '视频分辨率只允许 480p 或 720p');
   if (typeof video.audio !== 'boolean') fail(400, '请明确视频是否包含音频');
   return { seconds: video.seconds, resolution: video.resolution, audio: video.audio };

@@ -39,7 +39,7 @@ const fetchImpl = async (url, init) => {
   }
   if (url.endsWith('/uploads/images')) { calls.uploads++; return Response.json({ url: 'https://upload.apimart.ai/f/image/reference.png' }); }
   if (url.endsWith('/images/generations')) { calls.image++; assert.equal(JSON.parse(init.body).image_urls.length, 1); return Response.json({ code: 200, data: [{ task_id: 'image-task', status: 'submitted' }] }); }
-  if (url.endsWith('/videos/generations')) { calls.video++; assert.equal(JSON.parse(init.body).duration, 5); return Response.json({ code: 200, data: [{ task_id: 'video-task', status: 'submitted' }] }); }
+  if (url.endsWith('/videos/generations')) { calls.video++; assert.equal(JSON.parse(init.body).duration, 10); return Response.json({ code: 200, data: [{ task_id: 'video-task', status: 'submitted' }] }); }
   if (url.endsWith('/tasks/image-task')) return Response.json({ code: 200, data: { id: 'image-task', status: 'completed', result: { images: [{ url: ['https://upload.apimart.ai/f/image/result.png'] }] } } });
   if (url.endsWith('/tasks/video-task')) return Response.json({ code: 200, data: { id: 'video-task', status: 'completed', result: { videos: [{ url: ['https://upload.apimart.ai/f/video/result.mp4'] }] } } });
   throw new Error('Blocked unexpected upstream fixture: ' + url);
@@ -98,6 +98,11 @@ try {
     for (const [capability, amount] of Object.entries({ text: 3, image: 1, video: 1 })) assert.equal(wallet.quotas.find(item => item.capability === capability).available, amount);
     const restored = ok(await dingRequest('/api/event/session', { body: { code } })); assert.equal(restored.user.id, owner);
     assert.equal(center.quota.stats().redeemedCodeCount, 1);
+    const media = ok(await dingRequest('/api/media/jobs', customer));
+    assert.deepEqual(media.platform.video.durationOptions, [5, 10, 15]);
+    assert.equal(media.platform.video.durationSeconds, 5);
+    ok(await storeRequest('/api/v1/generation-options?userId=' + owner), 401);
+    ok(await storeRequest('/api/v1/generation-options?userId=' + owner, { headers: { authorization: 'Bearer invalid-fixture-key' } }), 401);
     ok(await dingRequest('/api/platform/event-codes', customer), 403);
   });
   await check('知识库进入文案上下文，3次成功后阻止第4次且不占图片视频', async () => {
@@ -119,7 +124,7 @@ try {
   let imageId;
   await check('图生图和视频经过中心，结果保存到丁小穗且各扣1次', async () => {
     for (const capability of ['image', 'video']) {
-      const body = { capability, modelId: null, prompt: '农产品包装宣传' + capability, ratio: capability === 'image' ? '3:4' : '16:9', consent: true, idempotencyKey: randomUUID(), ...(capability === 'image' ? { referenceImage: `data:image/png;base64,${png.toString('base64')}` } : {}) };
+      const body = { capability, modelId: null, prompt: '农产品包装宣传' + capability, ratio: capability === 'image' ? '3:4' : '16:9', consent: true, idempotencyKey: randomUUID(), ...(capability === 'image' ? { referenceImage: `data:image/png;base64,${png.toString('base64')}` } : { duration: 10 }) };
       const options = { ...customer, headers: { 'x-zdx-media-owner': owner }, body };
       let job = ok(await dingRequest('/api/media/jobs', options), 201).job;
       assert.equal(ok(await dingRequest('/api/media/jobs', options)).job.id, job.id);

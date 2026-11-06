@@ -5,8 +5,9 @@ export const APIMART_TEXT_ENDPOINT = 'https://api.apimart.ai/v1/chat/completions
 export const APIMART_IMAGE_MODEL = 'gpt-image-2.5-flare';
 export const APIMART_VIDEO_ENDPOINT = 'https://api.apimart.ai/v1/videos/generations';
 export const APIMART_VIDEO_MODEL = 'seedance-2.0-mini';
-// The event offers one 15-second 720p clip per video credit. These settings are
-// server-owned so a modified client cannot request a more expensive variant.
+// Legacy event cards default to 15 seconds; users may choose a shorter clip.
+// Resolution, model and audio remain server-owned.
+export const apimartVideoDurations = [5,10,15] as const;
 export const apimartVideoProfile = Object.freeze({model:APIMART_VIDEO_MODEL,duration:15,resolution:'720p',generate_audio:true});
 export const APIMART_TEXT_MODEL = 'deepseek-v4.1-flash';
 export type ApimartImageProfile = 'standard' | 'quality';
@@ -28,9 +29,9 @@ export function apimartImagePayload(model: string, prompt: string, ratio: string
 export function apimartVideoPayload(model:string,prompt:string,ratio:string='16:9',duration:number|null=15){
   if(model!==APIMART_VIDEO_MODEL)throw new ApimartProtocolError('视频模型与当前体验档位不匹配，请联系管理员');
   if(prompt.length>4000)throw new ApimartProtocolError('视频创作要求过长，请精简描述后再提交');
-  if(duration!==null&&duration!==15)throw new ApimartProtocolError('当前视频体验每次生成 15 秒，请勿更改时长');
+  if(duration!==null&&!apimartVideoDurations.includes(duration as 5|10|15))throw new ApimartProtocolError('请选择 5 秒、10 秒或 15 秒视频');
   if(!['16:9','9:16','1:1'].includes(ratio))throw new ApimartProtocolError('视频比例不支持');
-  return {...apimartVideoProfile,prompt,size:ratio,stream:false};
+  return {...apimartVideoProfile,duration:duration??apimartVideoProfile.duration,prompt,size:ratio,stream:false};
 }
 export function apimartTaskUrl(id: string) {
   if (!/^[A-Za-z0-9_-]{1,160}$/.test(id)) throw new ApimartProtocolError('媒体服务返回的任务标识不正确');

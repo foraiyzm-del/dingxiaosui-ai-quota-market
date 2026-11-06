@@ -32,10 +32,12 @@ for(const name of ['ai','media-jobs','quota-generation'])compile(name);
 const load=name=>import(pathToFileURL(path.join(dir,name+'.mjs')).href),ai=await load('ai'),media=await load('media-jobs'),adapter=await load('quota-generation');
 const who=id=>({id,displayName:id,identity:{provider:'password',userId:id},platformAdmin:false});
 const jobs=new Map(),requests=[],posts=[],downloads=[],limits={text:3,image:50,video:50};
+let optionsUnavailable=false;
 let mode='normal',finishMedia=false,contentFails=false,createCount=0;
 const png=Uint8Array.from([137,80,78,71,13,10,26,10,0,0,0,0]),mp4=Uint8Array.from([0,0,0,20,102,116,121,112,105,115,111,109]);
 globalThis.fetch=async(url,init={})=>{
  const target=new URL(url);assert.equal(target.origin,'https://center.fixture');assert.equal(init.headers.Authorization,'Bearer isolated-platform-key');requests.push(target.pathname);
+ if(target.pathname==='/api/v1/generation-options'){assert.equal(target.searchParams.get('userId'),'center-a');return optionsUnavailable?Response.json({error:'unavailable'},{status:503}):Response.json({video:{available:true,durationSeconds:5,durationOptions:[5,10,15],resolution:'720p'}});}
  if(target.pathname.endsWith('/delivery')){const body=JSON.parse(init.body);posts.push(body);return Response.json({id:'job-delivery',userId:body.userId,capability:'text',status:body.action==='accept'?'succeeded':'failed',output:{text:'{"answer":"已确认"}'}});}
  if(target.pathname==='/api/v1/generate'){
   const body=JSON.parse(init.body),key=body.userId+'|'+body.requestId;posts.push(body);
@@ -69,7 +71,7 @@ await check('three text uses exhaust only text; no local credit hold is created'
  const before=createCount;await assert.rejects(()=>ai.askModel('第四次',{},300,{requestId:randomUUID()}),e=>e.status===402);assert.equal(createCount,before);assert.equal(limits.image,50);assert.equal(limits.video,50);assert.equal(database.prepare('SELECT count(*) AS n FROM event_credit_usage').get().n,0);
 });
 await check('arbitrary quota account gets independent media options instead of fixed event model',async()=>{
- const workspace=await media.mediaWorkspace(who('a'));assert.equal(workspace.creditSource,'quota_center');assert.equal(workspace.platform.image.available,true);assert.equal(workspace.platform.image.referenceImageSupported,true);assert.equal(workspace.platform.video.durationSeconds,5);assert.deepEqual(workspace.models,[]);
+ const workspace=await media.mediaWorkspace(who('a'));assert.equal(workspace.creditSource,'quota_center');assert.equal(workspace.platform.image.available,true);assert.equal(workspace.platform.image.referenceImageSupported,true);assert.equal(workspace.platform.video.durationSeconds,5);assert.deepEqual(workspace.platform.video.durationOptions,[5,10,15]);assert.equal(workspace.platform.video.resolution,'720p');assert.deepEqual(workspace.models,[]);
 });
 let imageJob;
 await check('async image has one durable center request, own asset, and no second charge',async()=>{
@@ -78,8 +80,11 @@ await check('async image has one durable center request, own asset, and no secon
  finishMedia=true;unlock(imageJob.id);imageJob=await media.pollMediaJob('a',imageJob.id);assert.equal(imageJob.status,'succeeded');assert.equal(imageJob.outputs[0].persisted,true);assert.deepEqual(new Uint8Array(await (await media.mediaAsset('a',imageJob.id,0)).arrayBuffer()),png);assert.equal(createCount,before+1);
  await assert.rejects(()=>media.pollMediaJob('b',imageJob.id),e=>e.status===404);await assert.rejects(()=>media.mediaAsset('b',imageJob.id,0),e=>e.status===404);
 });
-await check('quota video requests longer than five seconds are clipped to the sold card',async()=>{
- const before=posts.length;await media.createMediaJob(who('b'),request({capability:'video',duration:15,ratio:'9:16'}));assert.equal(posts[before].seconds,5);assert.equal(posts[before].capability,'video');
+await check('quota video sends selected 10 and 15 seconds and leaves omitted duration to center',async()=>{
+ for(const duration of [10,15,undefined]){const before=posts.length;await media.createMediaJob(who('b'),request({capability:'video',duration,ratio:'9:16'}));assert.equal(posts[before].seconds,duration);assert.equal(posts[before].capability,'video');}
+});
+await check('missing center duration metadata disables video but leaves image available',async()=>{
+ optionsUnavailable=true;try{const workspace=await media.mediaWorkspace(who('a'));assert.equal(workspace.platform.video.available,false);assert.deepEqual(workspace.platform.video.durationOptions,[]);assert.equal(workspace.platform.image.available,true);}finally{optionsUnavailable=false;}
 });
 await check('JSON without an answer is rejected to the center and not returned as copy',async()=>{
  limits.text+=1;mode='incomplete';const before=posts.length;await assert.rejects(()=>ai.askModel('写文案',{item:'缺回答'},300,{requestId:randomUUID()},{validate:output=>typeof output.answer==='string'&&!!output.answer.trim()}),error=>error.status===502);assert.equal(posts.at(-1).action,'reject');assert.ok(posts.length>before);mode='normal';
