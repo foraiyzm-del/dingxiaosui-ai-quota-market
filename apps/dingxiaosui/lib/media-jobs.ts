@@ -54,7 +54,11 @@ export async function mediaWorkspace(user:Actor){
  const quota=await quotaAccount(user.id);
  if(quota){
   const rows=(await db().prepare('SELECT * FROM media_jobs WHERE user_id=? ORDER BY created_at DESC LIMIT 50').bind(user.id).all<JobRow>()).results;
-  const available=quotaCenterEnabled(),option=(capability:MediaCapability)=>({available,authorized:true,unavailableReason:available?null:'service_not_configured',model:'quota-center',kind:'quota-center',name:capability==='image'?'图片生成':'视频生成',...(capability==='video'?{durationSeconds:5}:{referenceImageSupported:true})});
+  const available=quotaCenterEnabled();
+  type VideoOptions={available:boolean;durationSeconds:number;durationOptions:number[];resolution?:string};
+  const options=available?await quotaCenterRequest<{video:VideoOptions}>('/generation-options?userId='+encodeURIComponent(quota.centerUserId),undefined,{timeoutMs:6000}).catch(()=>null):null;
+  const video=options?.video,videoReady=video?.available===true&&Array.isArray(video.durationOptions)&&video.durationOptions.length>0&&video.durationOptions.every(seconds=>[5,10,15].includes(seconds))&&video.durationOptions.includes(video.durationSeconds);
+  const option=(capability:MediaCapability)=>({available:available&&(capability==='image'||videoReady),authorized:true,unavailableReason:available&&(capability==='image'||videoReady)?null:'service_not_configured',model:'quota-center',kind:'quota-center',name:capability==='image'?'图片生成':'视频生成',...(capability==='video'?{durationSeconds:videoReady?video!.durationSeconds:5,durationOptions:videoReady?video!.durationOptions:[],resolution:videoReady?video!.resolution:undefined}:{referenceImageSupported:true})});
   return {creditSource:'quota_center',jobs:rows.map(publicJob),models:[],defaultModelIds:{image:null,video:null},platform:{image:option('image'),video:option('video')}};
  }
  const all=await listModels(user.id),access={image:await platformMediaAllowed(user,'image'),video:await platformMediaAllowed(user,'video')};
@@ -184,7 +188,7 @@ function rowProvider(row:JobRow):MediaProvider{if(row.provider_kind==='quota-cen
 async function createQuotaMediaJob(user:Actor,options:CreateOptions,key:string,hash:string){
  const account=await quotaAccount(user.id);if(!account)throw new ApiError(403,'请先激活创作额度');
  if(options.modelId)throw new ApiError(400,'此激活码使用已开通的创作服务，请选择平台模型');
- const id=crypto.randomUUID(),now=new Date().toISOString(),payload={userId:account.centerUserId,requestId:'media:'+id,capability:options.capability,prompt:agricultureMediaPrompt(options.prompt,options.capability),aspectRatio:options.ratio,...(options.size?{size:options.size}:{}),...(options.capability==='video'?{seconds:5}:{}),...(options.referenceImage?{referenceImage:options.referenceImage}:{})};
+ const id=crypto.randomUUID(),now=new Date().toISOString(),payload={userId:account.centerUserId,requestId:'media:'+id,capability:options.capability,prompt:agricultureMediaPrompt(options.prompt,options.capability),aspectRatio:options.ratio,...(options.size?{size:options.size}:{}),...(options.capability==='video'&&options.duration!==null?{seconds:options.duration}:{}),...(options.referenceImage?{referenceImage:options.referenceImage}:{})};
  const cipher=await encryptQuotaPayload(payload);
  try{await db().prepare("INSERT INTO media_jobs(id,user_id,capability,idempotency_key,request_hash,prompt,model_name,provider_kind,provider_endpoint,provider_model,key_cipher,status,created_at,updated_at,poll_after) VALUES (?,?,?,?,?,?,?,'quota-center','','quota-center',?,'queued',?,?,?)").bind(id,user.id,options.capability,key,hash,options.prompt,options.capability==='image'?'图片生成':'视频生成',cipher,now,now,Date.now()+20000).run();}
  catch(error){const concurrent=await db().prepare('SELECT * FROM media_jobs WHERE user_id=? AND idempotency_key=?').bind(user.id,key).first<JobRow>();if(!concurrent)throw error;if(concurrent.request_hash!==hash)throw new ApiError(409,'该任务标识已对应另一份内容');return {job:publicJob(concurrent),created:false};}

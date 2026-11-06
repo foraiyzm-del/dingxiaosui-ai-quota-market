@@ -7,13 +7,16 @@ import { parseUpstreamBody } from './upstream-body.mjs';
 import { publicAddress, resolveUpstreamAddresses } from './upstream-dns.mjs';
 import { generationOptions, referenceImage, textPayload } from './generation-options.mjs';
 import { imageMime } from './image.mjs';
-import { mediaSpec } from './media-spec.mjs';
+import { mediaSpec, VIDEO_DURATION_OPTIONS } from './media-spec.mjs';
 import { fallbackChain, modelPricing, modelTimeoutMs } from './model-tiers.mjs';
+import { withApimartRelayAuth } from './apimart-relay-auth.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const now = () => new Date().toISOString();
 const MAX_JSON_BYTES = 24 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+const SELECTABLE_SEEDANCE = /^seedance-2\.(?:0(?:-mini|-fast)?|5)$/u;
+const selectableVideo = config => config.protocol === 'apimart' && SELECTABLE_SEEDANCE.test(config.model.id);
 function validText(value, field, max) {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) fail(400, `${field}格式无效`);
   return value.trim();
@@ -133,7 +136,10 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
   ); CREATE INDEX IF NOT EXISTS generation_audit_job ON generation_audit(job_id,id);`);
   const pending = new Set();
   const polling = new Map();
-  const fetcher = (url, init, maxBytes) => fetchImpl ? fetchImpl(url, init) : networkRequest(url, init, { allowPrivateUpstreams, maxBytes });
+  const fetcher = (url, init, maxBytes) => {
+    const authenticated = withApimartRelayAuth(url, init);
+    return fetchImpl ? fetchImpl(url, authenticated) : networkRequest(url, authenticated, { allowPrivateUpstreams, maxBytes });
+  };
   const rowById = id => db.prepare('SELECT * FROM generation_jobs WHERE id=?').get(id);
   const parse = value => value ? JSON.parse(value) : null;
   function transaction(work) {
@@ -335,6 +341,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       fields.size = input.size;
     }
     if (input.seconds !== undefined && input.seconds !== '') {
+      if (capability !== 'video') fail(400, '时长仅用于视频生成');
       const seconds = Number(input.seconds);
       if (!Number.isInteger(seconds) || seconds < 1 || seconds > 120) fail(400, '视频时长必须为 1 至 120 秒');
       fields.seconds = String(seconds);
@@ -361,8 +368,16 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     }
     throw lastError;
   }
-  function priced(config) {
-    return config.model.pricing || modelPricing(config.model.id) || null;
+  function priced(config, videoSeconds = 5, defaultVideoSeconds = 5) {
+    const pricing = config.model.pricing || modelPricing(config.model.id) || null;
+    if (selectableVideo(config) && pricing?.perRequestCents !== undefined) {
+      // Only built-in reference prices declare a duration basis. An administrator's
+      // existing per-request amount may describe another duration, so leave changed
+      // durations unpriced instead of inventing a baseline or underestimating them.
+      if (config.model.pricing) return videoSeconds === defaultVideoSeconds ? pricing : null;
+      if (pricing.referenceSeconds) return { ...pricing, perRequestCents: pricing.perRequestCents * videoSeconds / pricing.referenceSeconds };
+    }
+    return pricing;
   }
   function buildPayload(fields, model, protocol, profile) {
     const payload = protocol === 'apimart' ? apimartPayload(fields, model) : fields.capability === 'text' ? textPayload(fields, model)
@@ -401,9 +416,15 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       audit(id, 'generation.fallback', { from: row.model, to: step.model, skipped: true, reason: 'model_not_configured' });
       return accessDenied ? recover(id, message, { accessDenied: true }) : finish(id, 'failed', { error: `${message.replace(/，预留次数已退回$/, '')}；备用模型未配置，预留次数已退回` });
     }
+    if (row.capability === 'video' && config.protocol === 'apimart' && !selectableVideo(config)
+      && (snapshot.videoSpec?.seconds || Number(snapshot.seconds) || 5) !== 5) {
+      audit(id, 'generation.fallback', { from: row.model, to: step.model, skipped: true, reason: 'duration_unsupported' });
+      return recover(id, message, { accessDenied: true });
+    }
     if (row.capability === 'video' && config.videoRequestFormat === 'multipart') return finish(id, 'failed', { error: message });
     audit(id, 'generation.fallback', { from: row.model, to: step.model, reason: accessDenied ? 'model_access_denied' : 'primary_failed' });
-    const pricing = priced(config);
+    const pricing = priced(config, snapshot.videoSpec?.seconds || Number(snapshot.seconds) || 5,
+      snapshot.defaultVideoSeconds || snapshot.videoSpec?.seconds || 5);
     db.prepare('UPDATE generation_jobs SET model=?,pricing_json=?,status=?,error=NULL,upstream_id=NULL,updated_at=? WHERE id=?')
       .run(step.model, pricing ? JSON.stringify(pricing) : null, 'running', now(), id);
     const fields = { capability: row.capability, prompt: snapshot.prompt, ...(snapshot.size ? { size: snapshot.size } : {}),
@@ -414,7 +435,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
     let lastDenied = false;
     try {
       for (const resolution of resolutions.length ? resolutions : [null]) {
-        const video = snapshot.videoSpec ? { ...snapshot.videoSpec, ...(resolution ? { resolution } : {}) } : (resolution ? { seconds: 5, resolution, audio: false } : null);
+        const video = snapshot.videoSpec ? { ...snapshot.videoSpec, ...(resolution ? { resolution } : {}) } : (resolution ? { seconds: Number(snapshot.seconds) || 5, resolution, audio: false } : null);
         const payload = buildPayload(fields, step.model, config.protocol, { video, image: snapshot.imageSpec || null });
         const response = await fetchUpstream(endpoint(config, row.capability), { method: 'POST', headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': `${id}:fallback:${step.model}:${resolution || 'default'}` }, body: JSON.stringify(payload), redirect: 'manual', signal: AbortSignal.timeout(modelTimeoutMs(step.model, config.timeoutMs)) }, undefined, { attempts: 2 });
         if (!response.ok) {
@@ -448,6 +469,24 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
   }
 
   const api = {
+    mediaOptions({ projectId, userId } = {}) {
+      const unavailable = { video: { available: false, durationSeconds: null, durationOptions: [], resolution: null } };
+      projectId = validText(projectId, '平台标识', 64);
+      userId = validText(userId, '用户标识', 200);
+      try {
+        const platform = platforms.getPlatform(projectId);
+        if (!platform.enabled) return unavailable;
+        const binding = platform.bindings.find(item => item.capability === 'video');
+        if (!binding) return unavailable;
+        const profile = cardProfile(projectId, userId);
+        const model = profile?.models?.video || binding.model;
+        const config = channels.getForExecution({ channelId: binding.channelId, capability: 'video', model });
+        const durationSeconds = profile?.video?.seconds || 5;
+        return { video: { available: true, durationSeconds,
+          durationOptions: selectableVideo(config) ? [...VIDEO_DURATION_OPTIONS] : [durationSeconds],
+          resolution: profile?.video?.resolution || null } };
+      } catch { return unavailable; }
+    },
     async execute(input = {}) {
       const fields = inputFields(input);
       const fingerprint = createHash('sha256').update(JSON.stringify(fields)).digest('hex');
@@ -460,16 +499,29 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       if (!platform.enabled) fail(409, '该平台已停用');
       const binding = platform.bindings.find(item => item.capability === fields.capability);
       if (!binding) fail(409, '该平台尚未配置此能力的 API 渠道');
-      const profile = cardProfile(fields.projectId, fields.userId);
+      let profile = cardProfile(fields.projectId, fields.userId);
+      const defaultVideoSeconds = profile?.video?.seconds || 5;
       const model = profile?.models?.[fields.capability] || binding.model;
       const config = channels.getForExecution({ channelId: binding.channelId, capability: fields.capability, model });
+      if (fields.capability === 'video' && config.protocol === 'apimart') {
+        const seconds = fields.seconds ? Number(fields.seconds) : defaultVideoSeconds;
+        if (selectableVideo(config)) {
+          if (!VIDEO_DURATION_OPTIONS.includes(seconds)) fail(400, '视频时长请选择 5 秒、10 秒或 15 秒');
+          // Issued cards keep their saved default, model, resolution and audio settings.
+          // Only the bounded duration selection applies to this one generation.
+          profile = { ...(profile || {}), video: { seconds,
+            resolution: profile?.video?.resolution || (['seedance-2.5', 'seedance-2.0'].includes(model) ? '720p' : '480p'),
+            audio: profile?.video?.audio ?? false } };
+        } else if (seconds !== defaultVideoSeconds) fail(400, '当前视频模型暂不支持选择其他时长');
+      }
       if (fields.referenceImage && config.protocol !== 'apimart') fail(400, '该渠道尚未配置参考图上传协议，请使用支持图生图的 APIMart 渠道');
       const id = randomUUID();
       const timestamp = now();
-      const pricing = priced(config);
+      const pricing = priced(config, profile?.video?.seconds || Number(fields.seconds) || 5, defaultVideoSeconds);
       const snapshot = { capability: fields.capability, prompt: fields.prompt, size: fields.size ?? null, seconds: fields.seconds ?? null,
         aspectRatio: fields.aspectRatio ?? null, responseFormat: fields.responseFormat ?? null, maxTokens: fields.maxTokens ?? null,
         messages: fields.messages ?? null, hasReferenceImage: Boolean(fields.referenceImage),
+        ...(fields.capability === 'video' ? { defaultVideoSeconds } : {}),
         ...(profile?.video ? { videoSpec: profile.video } : {}), ...(profile?.image ? { imageSpec: profile.image } : {}),
         ...(profile?.fallbacks ? { fallbacks: profile.fallbacks } : {}), ...(profile?.tier ? { tier: profile.tier } : {}), primaryModel: model };
       try {

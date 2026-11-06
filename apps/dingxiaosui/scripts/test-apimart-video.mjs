@@ -14,7 +14,7 @@ await import('./migrate-ecs.mjs');
 const runtime=await import('../runtime/node-env.mjs'),database=runtime.sqlite(),dir=path.join(process.env.ZDX_DATA_DIR,'modules');fs.mkdirSync(dir);
 fs.writeFileSync(path.join(dir,'identity.mjs'),"export const localAuthEnabled=()=>false;export const identityReady=()=>true;export const platformIdentity=who=>who.userId==='admin';");
 fs.writeFileSync(path.join(dir,'chatgpt-auth.mjs'),"export const getChatGPTUser=async()=>null;");
-for(const name of ['quota-center','quota-generation','apimart-protocol','event-plans','event-credits','request-body','tenancy','ai-config','media-config','user-models','shanxi-knowledge','ding-persona','agriculture-policy','media-jobs']){
+for(const name of ['quota-media-recovery','upstream-body','quota-center','quota-generation','apimart-protocol','event-plans','event-credits','request-body','tenancy','ai-config','media-config','user-models','shanxi-knowledge','ding-persona','agriculture-policy','media-jobs']){
  let source=fs.readFileSync(`lib/${name}.ts`,'utf8').replace("import knowledge from '../shanxi-knowledge.json';",'const knowledge='+fs.readFileSync('shanxi-knowledge.json','utf8')+';').replace(/(['"])cloudflare:workers\1/g,JSON.stringify(pathToFileURL(path.resolve('runtime/node-env.mjs')).href)).replace(/(['"])@\/app\/chatgpt-auth\1/g,"'./chatgpt-auth.mjs'").replace(/(['"])\.\/([\w-]+)\1/g,"'./$2.mjs'");
  fs.writeFileSync(path.join(dir,name+'.mjs'),ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
 }
@@ -55,7 +55,7 @@ await check('official video endpoint and fixed model profile cannot be upgraded 
  assert.equal(config.validateMediaEndpoint(protocol.APIMART_VIDEO_ENDPOINT,'video','apimart'),protocol.APIMART_VIDEO_ENDPOINT);
  for(const endpoint of [protocol.APIMART_IMAGE_ENDPOINT,'https://api.apimart.ai/other/videos/generations','https://api.apimart.ai/v1/videos/generations?x=1'])assert.throws(()=>config.validateMediaEndpoint(endpoint,'video','apimart'));
  await config.saveMediaConfig({capability:'video',kind:'apimart',endpoint:protocol.APIMART_VIDEO_ENDPOINT,model:protocol.APIMART_VIDEO_MODEL,enabled:true,clearKey:false,apiKey:secret,revision:0},'admin');
- for(const change of [{duration:5},{duration:10},{duration:30},{prompt:'字'.repeat(4000)},{resolution:'1080p'},{model:'seedance-2.0-fast'},{n:2},{generate_audio:false},{video_urls:['https://getapib.org/reference.mp4']}])await assert.rejects(create('a',change),error=>error.status===400);
+ for(const change of [{duration:30},{prompt:'字'.repeat(4000)},{resolution:'1080p'},{model:'seedance-2.0-fast'},{n:2},{generate_audio:false},{video_urls:['https://getapib.org/reference.mp4']}])await assert.rejects(create('a',change),error=>error.status===400);
  assert.equal(posts,0);await assert.rejects(create('none'),error=>error.status===403);assert.equal(posts,0);
  assert(!JSON.stringify(await jobs.mediaWorkspace(who('a'))).includes(secret));
 });
@@ -104,6 +104,9 @@ await check('personal APIMart video adapter keeps ownership and bypasses event a
  const workspace=await jobs.mediaWorkspace(who('g'));assert.equal(workspace.models.find(row=>row.id===modelId).kind,'apimart');
  const duration=listed.kind==='apimart'?15:5;
  const prior=await quota('g'),job=await create('g',{modelId,duration});assert.equal(lastPayload.duration,15);await jobs.pollMediaJob('g',job.id);assert.deepEqual(await quota('g'),prior);await assert.rejects(create('h',{modelId}),error=>error.status===404);
+});
+await check('legacy cards support selected 5 and 10 seconds while server keeps model resolution and audio',async()=>{
+ reset();for(const duration of [5,10]){const job=await create('h',{duration});assert.equal(lastPayload.duration,duration);assert.equal(lastPayload.model,'seedance-2.0-mini');assert.equal(lastPayload.resolution,'720p');assert.equal(lastPayload.generate_audio,true);await jobs.pollMediaJob('h',job.id);assert.equal((await jobs.ownedMediaJob('h',job.id)).status,'succeeded');}
 });
 assert.equal(database.prepare('PRAGMA foreign_key_check').all().length,0);
 fs.writeFileSync(path.join(process.env.ZDX_DATA_DIR,'results.json'),JSON.stringify({ok:true,controlledNetwork:true,groups:results.length,results},null,2));

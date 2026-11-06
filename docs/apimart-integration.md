@@ -9,9 +9,9 @@
 - 密钥：仅填写到本机后台，数据库加密存储。
 - 文案：`deepseek-v4.1-flash`（领导体验卡这一批改为 `claude-sonnet-5-5`，失败时可降到 deepseek）
 - 图片：`gpt-image-2.5-flare`
-- 视频：`seedance-2.0-mini`（领导体验卡这一批改为 `seedance-2.5`，720p、5 秒、无声；失败时可降到 `seedance-2.0` 720p）
+- 视频：`seedance-2.0-mini`（领导体验卡这一批改为 `seedance-2.5`，720p、默认 5 秒、无声；失败时可降到 `seedance-2.0` 720p）
 
-领导体验卡的模型写在该批次的卡密上，不会替换上面这套全站默认。`seedance-2.5` 仍走 `POST /v1/videos/generations`，用 `duration`、`resolution`、`size`、`generate_audio`，返回 `data[0].task_id`，再用 `GET /v1/tasks/{task_id}` 查询。它默认带声、默认 720p，所以卡密里的无声和 5 秒必须显式传。
+领导体验卡的模型写在该批次的卡密上，不会替换上面这套全站默认。`seedance-2.5` 仍走 `POST /v1/videos/generations`，用 `duration`、`resolution`、`size`、`generate_audio`，返回 `data[0].task_id`，再用 `GET /v1/tasks/{task_id}` 查询。它默认带声、默认 720p，所以无声和本次选择的时长必须显式传；未选时长时沿用卡密默认值。
 
 使用已有密钥时，还须确保密钥的模型限制允许以上模型。保存配置本身不会发起模型调用。
 
@@ -36,9 +36,13 @@
 - GPT Image 2.5：每次一张，`size: "1:1"`、`resolution: "1k"`、`quality: "low"`，即 1024 × 1024 方图。
 - Seedance 2.0：`duration: 5`、`resolution: "480p"`、`size: "16:9"`、`generate_audio: false`。
 
-这些规格位于 `sidecar/apimart.mjs`。没有商品规格时，调用方指定的合法 `size`、`aspectRatio` 或视频 `seconds` 仍会覆盖对应参数。新卡商品绑定 5 秒 / 480p / 无声后，发卡中心会按该规格裁剪更长或带声的请求，仍只扣 1 次视频。旧体验卡不走这张新卡，仍是 15 秒、720p、有声。
+这些规格位于 `sidecar/apimart.mjs`。没有商品规格时，调用方指定的合法 `size`、`aspectRatio` 或视频 `seconds` 仍会覆盖对应参数。自 2026-11-06 起，已接入的 APIMart Seedance 2.0 / mini / fast / 2.5 可选择 5、10、15 秒。卡密保存的时长是默认值；已有领导卡无需重发。模型、分辨率和声音仍由卡片及平台控制，浏览器只能选择允许的时长，每次成功仍扣 1 次视频。旧体验卡默认 15 秒、720p、有声，也可选择 5 或 10 秒。其他渠道仍只在丁小穗提供原默认时长。
 
 丁小穗文案使用 `messages` 保留业务提示词与知识库，JSON 模式，并按任务传输出长度（主对话 3500 tokens）。图生图先在服务端将不超过 6 MiB 的有效 PNG/JPEG/WebP 上传至 `/v1/uploads/images`，再用 `image_urls` 生成。图片与视频可通过受保护的中心内容接口下载到丁小穗。尚未实现所有模型的多模态参考和高级参数表单。
+
+延长视频会增加供应商成本。内置 Seedance 2.5 参考价格明确按 5 秒计，估算随所选时长换算；已有渠道的自定义每请求价格没有时长基准，非默认时长显示未定价，避免误算。领导卡整批成本工具仍按卡片默认 5 秒估算，不能直接作为全部生成 15 秒的预算。
+
+发布本次改动时需同时更新发卡中心与丁小穗，先发布中心（新增 `/api/v1/generation-options`）。新丁小穗读取该接口失败时暂不开放视频提交，图片仍可使用。
 
 ## 公开报价参考
 

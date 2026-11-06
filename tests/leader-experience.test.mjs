@@ -133,13 +133,13 @@ test('only the leader card selects the expensive models, and a failed primary fa
   const standard = await state.generation.execute({ projectId: 'dingxiaosui', userId: 'member', requestId: 'std-video', capability: 'video', prompt: '月卡视频', seconds: 15 });
   assert.equal(seen.at(-1).model, 'seedance-2.0-mini');
   assert.equal(seen.at(-1).resolution, '480p');
-  assert.equal(seen.at(-1).duration, 5);
+  assert.equal(seen.at(-1).duration, 15);
   assert.equal(standard.status, 'running');
   const video = await state.generation.execute({ projectId: 'dingxiaosui', userId: 'boss', requestId: 'leader-video', capability: 'video', prompt: '领导视频', seconds: 15 });
   assert.equal(seen.filter(body => body.model === 'seedance-2.5').length, 1);
   assert.equal(seen.at(-1).model, 'seedance-2.0');
   assert.equal(seen.at(-1).resolution, '720p');
-  assert.equal(seen.at(-1).duration, 5);
+  assert.equal(seen.at(-1).duration, 15);
   assert.equal(seen.at(-1).generate_audio, false);
   assert.equal(video.status, 'running');
   const text = await state.generation.execute({ projectId: 'dingxiaosui', userId: 'boss', requestId: 'leader-text', capability: 'text', prompt: '领导文案', responseFormat: 'json_object', messages: [{ role: 'user', content: '写一句' }] });

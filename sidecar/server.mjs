@@ -336,6 +336,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
       }
       if (route.startsWith('/api/v1/')) {
         const projectId = project();
+        if (route === '/api/v1/generation-options' && req.method === 'GET') return json(generation.mediaOptions({ projectId, userId: url.searchParams.get('userId') }));
         if (route === '/api/v1/generate' && req.method === 'POST') {
           const data = await input(9 * 1024 * 1024);
           rate(`generate:${projectId}:${typeof data.userId === 'string' ? data.userId.slice(0, 200) : ''}`, 60);

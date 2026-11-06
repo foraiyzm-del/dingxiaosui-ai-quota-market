@@ -107,11 +107,12 @@ SDK 方法为 `redeem({userId,code,idempotent?})`、`balance(userId)`、`generat
 
 | 操作 | 方法与路径 | 输入或结果 |
 | --- | --- | --- |
+| 获取可用视频时长 | `GET /api/v1/generation-options?userId=...` | `{video:{available,durationSeconds,durationOptions,resolution}}`，仅返回已鉴权平台中该用户的规格，不含渠道凭证 |
 | 创建或重试原任务 | `POST /api/v1/generate` | `{userId,requestId,capability,prompt,size?,seconds?}` → `Job` |
 | 获取任务／查询视频进展 | `GET /api/v1/generation/{id}?userId=...` | `Job` |
 | 获取受保护的媒体 | `GET /api/v1/generation/{id}/content?userId=...&index=0` | 图片／视频二进制，仍须平台 Bearer 凭证；图片序号当前仅 0 |
 
-`capability` 为 `text`、`image` 或 `video`；`requestId` 最长 160 字符，提示词最长 20,000 字符。尺寸格式为 `1024x1024` 等或 `auto`；视频秒数范围 1–120，实际可用值由上游模型决定。图片一次请求固定生成一张。模型、渠道与每次扣除次数均由平台配置决定，客户端提交其他模型或接口地址不会覆盖路由。
+`capability` 为 `text`、`image` 或 `video`；`requestId` 最长 160 字符，提示词最长 20,000 字符。尺寸格式为 `1024x1024` 等或 `auto`；通用视频秒数校验范围 1–120；APIMart Seedance 2.0 / mini / fast / 2.5 在本平台仅允许 5、10、15 秒，未传则沿用卡片默认。其他 APIMart 模型不得用该接口突破原默认时长。前端应使用 `generation-options` 返回的 `durationOptions`，不自行推断所有渠道都支持新时长。图片一次请求固定生成一张。模型、渠道与每次扣除次数均由平台配置决定，客户端提交其他模型或接口地址不会覆盖路由。
 
 业务平台扩展字段：文字可传 `messages:[{role:"system"|"user"|"assistant",content:string}]`（最多 64 条、总长 131072 字符）、`responseFormat:"json_object"`、`maxTokens:1..32768`。JSON 模式只在返回非空 JSON 对象时扣次，否则返还；业务平台额外的内容校验失败需核对原任务，不能再调用一次或擅自退款。图片／视频可传 `aspectRatio:"1:1"|"3:4"|"4:3"|"16:9"|"9:16"`，上游模型仍有自己的支持范围。
 

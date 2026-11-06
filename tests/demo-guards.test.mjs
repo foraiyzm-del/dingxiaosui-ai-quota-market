@@ -119,26 +119,32 @@ test('a polled task id that does not match the original is not settled', async t
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM generation_audit WHERE action='generation.task_mismatch'").get().n, 1);
 });
 
-test('a sold 5 second silent 480p spec replaces a longer client request and leaves unbound requests unchanged', async t => {
+test('a saved 5 second default permits an explicit supported duration while retaining silent 480p', async t => {
   const seen = [];
   const spec = { video: { seconds: 5, resolution: '480p', audio: false } };
   const bound = setup(t, async (_url, init) => { seen.push(JSON.parse(init.body)); return json({ code: 200, data: [{ task_id: 'video-spec', status: 'submitted' }] }); }, { spec });
   await bound.generation.execute({ ...bound.input, capability: 'video', seconds: 15 });
-  assert.equal(seen.at(-1).duration, 5);
+  assert.equal(seen.at(-1).duration, 15);
   assert.equal(seen.at(-1).resolution, '480p');
   assert.equal(seen.at(-1).generate_audio, false);
-  assert.equal(bound.db.prepare("SELECT COUNT(*) AS n FROM generation_audit WHERE action='generation.spec_clipped'").get().n, 1);
+  assert.equal(bound.db.prepare("SELECT COUNT(*) AS n FROM generation_audit WHERE action='generation.spec_clipped'").get().n, 0);
   const open = setup(t, async (_url, init) => { seen.push(JSON.parse(init.body)); return json({ code: 200, data: [{ task_id: 'video-open', status: 'submitted' }] }); });
   await open.generation.execute({ ...open.input, capability: 'video', seconds: 15 });
   assert.equal(seen.at(-1).duration, 15);
 });
 
-test('the legacy experience profile stays 15 seconds with audio and is separate from the new card', () => {
-  const legacy = apimartVideoPayload(APIMART_VIDEO_MODEL, '体验卡视频', '16:9', 15);
+test('the legacy experience profile defaults to 15 seconds with audio and permits supported shorter clips', () => {
+  const legacy = apimartVideoPayload(APIMART_VIDEO_MODEL, '体验卡视频', '16:9');
   assert.equal(legacy.duration, 15);
   assert.equal(legacy.resolution, '720p');
   assert.equal(legacy.generate_audio, true);
-  assert.throws(() => apimartVideoPayload(APIMART_VIDEO_MODEL, '体验卡视频', '16:9', 5), /15 秒/);
+  for (const seconds of [5, 10]) {
+    const selected = apimartVideoPayload(APIMART_VIDEO_MODEL, '体验卡视频', '16:9', seconds);
+    assert.equal(selected.duration, seconds);
+    assert.equal(selected.resolution, '720p');
+    assert.equal(selected.generate_audio, true);
+  }
+  assert.throws(() => apimartVideoPayload(APIMART_VIDEO_MODEL, '体验卡视频', '16:9', 30), /5 秒、10 秒或 15 秒/);
 });
 
 test('closing one capability at price 0 keeps the free combination for the others', t => {
