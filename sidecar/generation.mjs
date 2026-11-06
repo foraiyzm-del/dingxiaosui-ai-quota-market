@@ -10,6 +10,7 @@ import { imageMime } from './image.mjs';
 import { mediaSpec, VIDEO_DURATION_OPTIONS } from './media-spec.mjs';
 import { fallbackChain, modelPricing, modelTimeoutMs } from './model-tiers.mjs';
 import { withApimartRelayAuth } from './apimart-relay-auth.mjs';
+import { apimartUploadUrl } from './apimart-upload-url.mjs';
 
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const now = () => new Date().toISOString();
@@ -38,12 +39,12 @@ async function networkRequest(address, init, { allowPrivateUpstreams = false, ma
       ...(url.protocol === 'https:' ? { servername: isIP(hostname) ? undefined : hostname, rejectUnauthorized: true } : {}),
       lookup: (_name, options, callback) => options.all ? callback(null, addresses) : callback(null, addresses[0].address, addresses[0].family) }, response => {
       const declared = Number(response.headers['content-length']);
-      if (declared > maxBytes) { response.destroy(); reject(new Error('上游响应超过大小限制')); return; }
+      if (declared > maxBytes) { response.destroy(); reject(Object.assign(new Error('上游响应超过大小限制'), { code: 'UPSTREAM_RESPONSE_TOO_LARGE' })); return; }
       const chunks = [];
       let size = 0;
       response.on('data', chunk => {
         size += chunk.length;
-        if (size > maxBytes) { response.destroy(); reject(new Error('上游响应超过大小限制')); }
+        if (size > maxBytes) { response.destroy(); reject(Object.assign(new Error('上游响应超过大小限制'), { code: 'UPSTREAM_RESPONSE_TOO_LARGE' })); }
         else chunks.push(chunk);
       });
       response.on('error', reject);
@@ -182,6 +183,24 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
 
   function audit(jobId, action, detail) {
     db.prepare('INSERT INTO generation_audit(job_id,action,detail,created_at) VALUES(?,?,?,?)').run(jobId, action, JSON.stringify(detail ?? {}), now());
+  }
+  function uploadFailure(id, category, { startedAt, status, error } = {}) {
+    const messages = {
+      http: '参考图片上传失败，尚未开始生成，预留次数已退回',
+      json: '参考图片上传响应无效，尚未开始生成，预留次数已退回',
+      url: '参考图片上传结果无效，尚未开始生成，预留次数已退回',
+      network: '参考图片上传连接失败，尚未开始生成，预留次数已退回',
+      timeout: '参考图片上传超时，尚未开始生成，预留次数已退回',
+      prepare: '参考图准备失败，尚未开始生成，预留次数已退回',
+    };
+    const knownCodes = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ABORT_ERR', 'ERR_STREAM_PREMATURE_CLOSE', 'UPSTREAM_RESPONSE_TOO_LARGE'];
+    const code = [error?.code, error?.cause?.code].find(value => knownCodes.includes(value));
+    audit(id, 'reference.upload_failed', { category,
+      ...(Number.isFinite(startedAt) ? { elapsedMs: Math.max(0, Date.now() - startedAt) } : {}),
+      ...(Number.isInteger(status) ? { httpStatus: status } : {}),
+      ...(code ? { networkCode: code } : {}),
+      ...(error?.preconnect === true ? { preconnect: true } : {}) });
+    return finish(id, 'failed', { error: messages[category] || messages.prepare });
   }
   function rememberUpstream(id, data, secret) {
     let encoded = JSON.stringify(data);
@@ -544,16 +563,24 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       const headers = { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': id };
       pending.add(id);
       let generationSubmitted = false;
+      let uploadPhase = 'prepare', uploadStartedAt, uploadStatus, uploadSignal;
       try {
         if (fields.referenceImage) {
+          uploadStartedAt = Date.now();
           const photo = referenceImage(fields.referenceImage);
           const boundary = `----QuotaReference${randomUUID().replaceAll('-', '')}`;
           const extension = photo.contentType === 'image/jpeg' ? 'jpg' : photo.contentType === 'image/webp' ? 'webp' : 'png';
           const uploadBody = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="reference.${extension}"\r\nContent-Type: ${photo.contentType}\r\n\r\n`), photo.bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
-          const upload = await fetcher(`${config.baseUrl}/uploads/images`, { method: 'POST', headers: { Authorization: headers.Authorization, 'Content-Type': `multipart/form-data; boundary=${boundary}` }, body: uploadBody, redirect: 'manual', signal: AbortSignal.timeout(Math.min(30000, config.timeoutMs)) }, 16384);
-          if (!upload.ok) return finish(id, 'failed', { error: '参考图片上传失败，尚未开始生成，预留次数已退回' });
-          const url = safeAssetUrl((await readJson(upload))?.url, config.apiKey);
-          if (!url || new URL(url).hostname !== 'upload.apimart.ai' || !new URL(url).pathname.startsWith('/f/image/')) return finish(id, 'failed', { error: '参考图片上传结果无效，预留次数已退回' });
+          uploadPhase = 'network';
+          uploadSignal = AbortSignal.timeout(Math.min(30000, config.timeoutMs));
+          const upload = await fetcher(`${config.baseUrl}/uploads/images`, { method: 'POST', headers: { Authorization: headers.Authorization, 'Content-Type': `multipart/form-data; boundary=${boundary}` }, body: uploadBody, redirect: 'manual', signal: uploadSignal }, 16384);
+          uploadStatus = upload.status;
+          if (!upload.ok) return uploadFailure(id, 'http', { startedAt: uploadStartedAt, status: uploadStatus });
+          uploadPhase = 'json';
+          const uploaded = await readJson(upload);
+          uploadPhase = 'url';
+          const url = apimartUploadUrl(uploaded?.url, { secrets: [config.apiKey, process.env.APIMART_RELAY_SECRET] });
+          if (!url) return uploadFailure(id, 'url', { startedAt: uploadStartedAt, status: uploadStatus });
           payload.image_urls = [url];
         }
         let body = JSON.stringify(payload);
@@ -574,7 +601,11 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         rememberUpstream(id, data, config.apiKey);
         return applyResult(id, data, config.apiKey, config.protocol);
       } catch (error) {
-        if (!generationSubmitted) return finish(id, 'failed', { error: '参考图准备失败，尚未开始生成，预留次数已退回' });
+        if (!generationSubmitted) {
+          const timeout = uploadSignal?.aborted || error?.name === 'TimeoutError' || error?.code === 'ETIMEDOUT' || error?.cause?.name === 'TimeoutError';
+          const category = timeout ? 'timeout' : error?.code === 'UPSTREAM_RESPONSE_TOO_LARGE' ? 'json' : uploadPhase;
+          return uploadFailure(id, category, { startedAt: uploadStartedAt, status: uploadStatus, error });
+        }
         if (error.safeRejection) return finish(id, 'failed', { error: error.message });
         if (error.preconnect) return finish(id, 'failed', { error: '上游暂时无法连接，尚未开始生成，预留次数已退回' });
         return uncertain(id, '上游超时、连接中断或响应无效；为避免重复调用，次数暂时预留，请管理员核对');

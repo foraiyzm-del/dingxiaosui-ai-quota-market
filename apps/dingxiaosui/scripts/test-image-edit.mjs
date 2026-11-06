@@ -24,7 +24,7 @@ function compile(name){
  let source=fs.readFileSync(path.join(root,'lib',name+'.ts'),'utf8');
  for(const match of source.matchAll(/from\s+['"]\.\/([\w-]+)['"]/g))compile(match[1]);
  source=source.replace(/import (\w+) from ['"](\.\.?\/[^'"]+\.json)['"];?/g,(_all,id,file)=>'const '+id+'='+fs.readFileSync(path.resolve(root,'lib',file),'utf8')+';')
-  .replace(/(['"])cloudflare:workers\1/g,JSON.stringify(pathToFileURL(path.resolve('runtime/node-env.mjs')).href))
+  .replace(/(['"])\.\.\/\.\.\/\.\.\/sidecar\/([\w-]+\.mjs)\1/g,(_all,_quote,file)=>JSON.stringify(pathToFileURL(path.resolve('../../sidecar',file)).href)).replace(/(['"])cloudflare:workers\1/g,JSON.stringify(pathToFileURL(path.resolve('runtime/node-env.mjs')).href))
   .replace(/(['"])@\/app\/chatgpt-auth\1/g,"'./chatgpt-auth.mjs'")
   .replace(/(['"])\.\/([\w-]+)\1/g,"'./$2.mjs'");
  fs.writeFileSync(path.join(dir,name+'.mjs'),ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
@@ -41,7 +41,7 @@ function crc32(buffer){let crc=0xffffffff;for(const byte of buffer){crc^=byte;fo
 function chunk(type,bytes){const name=Buffer.from(type),head=Buffer.alloc(4),tail=Buffer.alloc(4);head.writeUInt32BE(bytes.length);tail.writeUInt32BE(crc32(Buffer.concat([name,bytes])));return Buffer.concat([head,name,bytes,tail]);}
 function png(width=2,height=2,color=40,noise=false){const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(width,0);ihdr.writeUInt32BE(height,4);ihdr[8]=8;ihdr[9]=6;const raw=Buffer.alloc(height*(width*4+1));for(let y=0;y<height;y++)for(let x=0;x<width*4;x++)raw[y*(width*4+1)+x+1]=noise?randomBytes(1)[0]:(x%4===3?255:color);return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',ihdr),chunk('IDAT',deflateSync(raw)),chunk('IEND',Buffer.alloc(0))]);}
 const referenceBytes=png(),referenceImage='data:image/png;base64,'+referenceBytes.toString('base64'),differentImage='data:image/png;base64,'+png(2,2,170).toString('base64');
-const resultImage=png(2,2,80),referenceUrl='https://upload.apimart.ai/f/image/fixture-reference.png';
+const resultImage=png(2,2,80);let referenceUrl='https://upload.apimart.ai/f/image/fixture-reference.png';
 let uploadMode='ok',generationMode='ok',uploads=0,generations=0,lastUpload,lastPayload,taskNumber=0;
 const resetLimits=()=>database.prepare("DELETE FROM auth_limits WHERE key LIKE 'media:%'").run();
 const request=(changes={})=>({capability:'image',modelId:null,prompt:'保持产品主体与品牌信息，换成柔和米白背景并优化光线。',ratio:'1:1',consent:true,idempotencyKey:randomUUID(),...changes});
@@ -83,6 +83,10 @@ await check('reference file uploads server-side before one image generation at t
  const before={uploads,generations},body=edit(),job=(await jobs.createMediaJob(who('a'),body)).job;assert.equal(uploads,before.uploads+1);assert.equal(generations,before.generations+1);assert.deepEqual(lastUpload.bytes,referenceBytes);assert.equal(lastUpload.type,'image/png');assert.deepEqual(lastPayload.image_urls,[referenceUrl]);assert.equal(lastPayload.n,1);assert.equal(lastPayload.resolution,'2k');assert.equal(lastPayload.quality,'medium');assert(!JSON.stringify(lastPayload).includes(referenceImage));privateOutput(job);
  const same=await jobs.createMediaJob(who('a'),body);assert.equal(same.job.id,job.id);assert.equal(uploads,before.uploads+1);assert.equal(generations,before.generations+1);assert.equal((await jobs.pollMediaJob('a',job.id)).status,'succeeded');
  privateOutput(await jobs.mediaWorkspace(who('a')));privateOutput(await jobs.ownedMediaJob('a',job.id));assert.equal((await jobs.mediaAsset('a',job.id,0)).status,200);await assert.rejects(jobs.mediaAsset('outsider',job.id,0),error=>error.status===404);
+});
+await check('the live APIMart upload CDN also submits one reference edit and saves its result',async()=>{
+ const oldUrl=referenceUrl;referenceUrl='https://getapib.org/image/1793943080-fixture-reference.png?signature=fixture';
+ try{const before={uploads,generations},body=edit(),job=(await jobs.createMediaJob(who('a'),body)).job;assert.equal(job.status,'queued');assert.equal(uploads,before.uploads+1);assert.equal(generations,before.generations+1);assert.deepEqual(lastPayload.image_urls,[referenceUrl]);assert.equal((await jobs.pollMediaJob('a',job.id)).status,'succeeded');assert.equal((await jobs.mediaAsset('a',job.id,0)).status,200);privateOutput(job);}finally{referenceUrl=oldUrl;}
 });
 await check('concurrent retries share one upload and one upstream generation',async()=>{
  const body=edit(),before={uploads,generations},all=await Promise.all(Array.from({length:8},()=>jobs.createMediaJob(who('a'),body)));assert.equal(new Set(all.map(row=>row.job.id)).size,1);assert.equal(uploads,before.uploads+1);assert.equal(generations,before.generations+1);

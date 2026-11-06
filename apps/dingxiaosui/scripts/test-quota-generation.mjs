@@ -23,7 +23,7 @@ function compile(name){
  let source=fs.readFileSync(path.join(root,'lib',name+'.ts'),'utf8');
  for(const match of source.matchAll(/from\s+['"]\.\/([\w-]+)['"]/g))compile(match[1]);
  source=source.replace(/import (\w+) from ['"](\.\.?\/[^'"]+\.json)['"];?/g,(_all,id,file)=>'const '+id+'='+fs.readFileSync(path.resolve(root,'lib',file),'utf8')+';')
-  .replace(/(['"])cloudflare:workers\1/g,JSON.stringify(pathToFileURL(path.resolve('runtime/node-env.mjs')).href))
+  .replace(/(['"])\.\.\/\.\.\/\.\.\/sidecar\/([\w-]+\.mjs)\1/g,(_all,_quote,file)=>JSON.stringify(pathToFileURL(path.resolve('../../sidecar',file)).href)).replace(/(['"])cloudflare:workers\1/g,JSON.stringify(pathToFileURL(path.resolve('runtime/node-env.mjs')).href))
   .replace(/(['"])@\/app\/chatgpt-auth\1/g,"'./chatgpt-auth.mjs'")
   .replace(/(['"])\.\/([\w-]+)\1/g,"'./$2.mjs'");
  fs.writeFileSync(path.join(dir,name+'.mjs'),ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);
@@ -45,6 +45,7 @@ globalThis.fetch=async(url,init={})=>{
   if(limits[body.capability]<=0)return Response.json({error:body.capability+'次数不足'},{status:402});
   limits[body.capability]--;createCount++;
   const job={id:'job-'+createCount,userId:body.userId,capability:body.capability,status:mode==='incomplete'?'ready':body.capability==='text'?'succeeded':mode==='uncertain'?'uncertain':'running',output:body.capability==='text'?{text:mode==='incomplete'?'{"title":"只有标题"}':'{"answer":"山西小米品牌文案","title":"小米"}'}:null};
+  if(mode==='upload-failed'){job.status='failed';job.error='参考图片上传结果无效，尚未开始生成，预留次数已退回';limits[body.capability]++;}
   jobs.set(key,{hash:JSON.stringify(body),job});
   if(mode==='lost-response')throw Error('controlled connection lost after center accepted');
   return Response.json(job);
@@ -79,6 +80,11 @@ await check('async image has one durable center request, own asset, and no secon
  const row=database.prepare('SELECT * FROM media_jobs WHERE id=?').get(imageJob.id);assert.equal(row.provider_kind,'quota-center');assert.equal(row.key_cipher,'');assert.equal(row.upstream_id,'job-'+createCount);assert.equal(posts.at(-1).aspectRatio,'3:4');assert(posts.at(-1).prompt.includes('更懂山西农产品'));
  finishMedia=true;unlock(imageJob.id);imageJob=await media.pollMediaJob('a',imageJob.id);assert.equal(imageJob.status,'succeeded');assert.equal(imageJob.outputs[0].persisted,true);assert.deepEqual(new Uint8Array(await (await media.mediaAsset('a',imageJob.id,0)).arrayBuffer()),png);assert.equal(createCount,before+1);
  await assert.rejects(()=>media.pollMediaJob('b',imageJob.id),e=>e.status===404);await assert.rejects(()=>media.mediaAsset('b',imageJob.id,0),e=>e.status===404);
+});
+await check('reference upload failures retain safe details without exposing arbitrary upstream errors',async()=>{
+ mode='upload-failed';try{const before=limits.image,created=(await media.createMediaJob(who('a'),request())).job;assert.equal(created.status,'failed');assert.equal(created.error,'参考图片上传结果无效，尚未开始生成，预留次数已退回');assert.equal(limits.image,before);}finally{mode='normal';}
+ const fallback='本次生成失败，创作中心已返还预留次数。';
+ for(const value of ['https://getapib.org/image/private.png?secret=key','sk-sensitive-provider-key',null,'参考图片上传结果无效，尚未开始生成，预留次数已退回 extra'])assert.equal(adapter.quotaMediaFailure(value),fallback);
 });
 await check('quota video sends selected 10 and 15 seconds and leaves omitted duration to center',async()=>{
  for(const duration of [10,15,undefined]){const before=posts.length;await media.createMediaJob(who('b'),request({capability:'video',duration,ratio:'9:16'}));assert.equal(posts[before].seconds,duration);assert.equal(posts[before].capability,'video');}
