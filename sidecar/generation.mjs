@@ -36,6 +36,8 @@ async function networkRequest(address, init, { allowPrivateUpstreams = false, ma
     let connected = false;
     const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
     const request = send(url, { method: init.method ?? 'GET', headers: init.headers, signal: init.signal,
+      // Give each checked address enough time before trying the next address family.
+      autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 2000,
       ...(url.protocol === 'https:' ? { servername: isIP(hostname) ? undefined : hostname, rejectUnauthorized: true } : {}),
       lookup: (_name, options, callback) => options.all ? callback(null, addresses) : callback(null, addresses[0].address, addresses[0].family) }, response => {
       const declared = Number(response.headers['content-length']);
