@@ -4,6 +4,19 @@ import {quotaAccount,quotaCenterRequest} from './quota-center';
 import {prepareAgricultureText} from './agriculture-policy';
 
 export type QuotaJob={id:string;userId:string;capability:'text'|'image'|'video';status:'queued'|'running'|'succeeded'|'failed'|'uncertain'|'ready';output?:{text?:string;images?:Array<{url?:string;dataUrl?:string}>;videoUrl?:string;contentAvailable?:boolean}|null;error?:string|null};
+// Only our center's static upload-stage messages may cross this boundary.
+// Never display arbitrary provider error bodies, URLs or credentials.
+const referenceUploadFailures=new Set([
+ '参考图片上传失败，尚未开始生成，预留次数已退回',
+ '参考图片上传响应无效，尚未开始生成，预留次数已退回',
+ '参考图片上传结果无效，尚未开始生成，预留次数已退回',
+ '参考图片上传连接失败，尚未开始生成，预留次数已退回',
+ '参考图片上传超时，尚未开始生成，预留次数已退回',
+ '参考图准备失败，尚未开始生成，预留次数已退回',
+]);
+export function quotaMediaFailure(error:unknown){
+ return typeof error==='string'&&referenceUploadFailures.has(error)?error:'本次生成失败，创作中心已返还预留次数。';
+}
 export async function currentQuotaAccount(){
  try{return await quotaAccount((await actor()).id);}catch(error){if(error instanceof ApiError&&error.status===401)return null;throw error;}
 }

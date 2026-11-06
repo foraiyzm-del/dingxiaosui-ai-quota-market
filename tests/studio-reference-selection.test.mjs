@@ -16,7 +16,7 @@ const between = (start, end) => {
   assert.ok(first >= 0 && last > first, `Missing source block: ${start}`);
   return source.slice(first, last);
 };
-const prepareSource = between('async function prepareReference(', 'const statusLabels:');
+const prepareSource = readFileSync(new URL('../apps/dingxiaosui/lib/reference-image.ts', import.meta.url), 'utf8').replace(/^export\s+/gmu, '');
 const chooseSource = between('async function chooseReference(', 'function switchCapability(');
 const checkSource = lines.find(line => line.trim().startsWith('const check=')).trim();
 const inputLine = lines.find(line => line.includes('id="studio-reference-file"'));
@@ -131,12 +131,12 @@ for (const scenario of ['different account', 'expired authentication']) {
   });
 }
 
-function imageHarness() {
-  const calls = { mime: null, revoked: 0, decoded: 0 };
+function imageHarness(width = 2, height = 2) {
+  const calls = { mime: null, revoked: 0, decoded: 0, drawSize: null };
   const output = Buffer.from('normalized-image');
   class Image {
-    naturalWidth = 2;
-    naturalHeight = 2;
+    naturalWidth = width;
+    naturalHeight = height;
     set src(_) { calls.decoded++; queueMicrotask(() => this.onload()); }
   }
   class FileReader {
@@ -147,9 +147,9 @@ function imageHarness() {
       });
     }
   }
-  const document = { createElement: () => ({ getContext: () => ({ drawImage() {} }), toBlob(done, mime) { done(new Blob([output], { type: mime })); } }) };
+  const document = { createElement: () => ({ getContext: () => ({ drawImage(_image, _x, _y, outputWidth, outputHeight) { calls.drawSize = [outputWidth, outputHeight]; } }), toBlob(done, mime) { done(new Blob([output], { type: mime })); } }) };
   const URL = { createObjectURL(blob) { calls.mime = blob.type; return 'blob:fixture'; }, revokeObjectURL() { calls.revoked++; } };
-  const runtime = stripBody(`const maxReferenceBytes=6*1024*1024;${prepareSource};return prepareReference;`);
+  const runtime = stripBody(`${prepareSource};return prepareReference;`);
   const prepare = new Function('window', 'document', 'URL', 'FileReader', 'crypto', runtime)({ Image }, document, URL, FileReader, webcrypto);
   return { prepare, calls };
 }
@@ -181,3 +181,14 @@ test('the existing 6 MiB client limit remains in force', async () => {
   await assert.rejects(prepare({ size: 6 * 1024 * 1024 + 1 }), /6 MB/u);
   assert.equal(calls.decoded, 0);
 });
+
+for (const [width, height, expected] of [[6000, 3000, [4096, 2048]], [3000, 6000, [2048, 4096]], [640, 480, [640, 480]]]) {
+  test(`reference helper requests proportional ${width}x${height} to ${expected.join('x')} canvas draw`, async () => {
+    const { prepare, calls } = imageHarness(width, height);
+    const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0, 73, 72, 68, 82]);
+    const result = await prepare(new File([pngSignature], 'synthetic.png'));
+    assert.deepEqual(calls.drawSize, expected);
+    assert.deepEqual([result.width, result.height], expected);
+    assert.equal(calls.revoked, 1);
+  });
+}

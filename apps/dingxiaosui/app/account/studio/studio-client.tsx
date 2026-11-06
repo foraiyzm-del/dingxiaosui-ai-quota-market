@@ -1,5 +1,6 @@
 'use client';
 import {useCallback,useEffect,useRef,useState} from 'react';
+import {prepareReference,type ReferenceImage} from '@/lib/reference-image';
 import {Image as ImageIcon,Film,Sparkles,RefreshCw,ArrowUpRight,CheckCircle2,Clock3,AlertCircle,Leaf,FileText,Upload,X} from 'lucide-react';
 
 type Capability='image'|'video';
@@ -12,36 +13,11 @@ type CreditSummary={ownerId:string;creditSource?:string;shopProductUrl?:string;q
 type Ratio='1:1'|'16:9'|'9:16';
 type ImageEditDraft={instructions:string;product:string;brand:string;sellingPoints:string;scene:string};
 type Pending={signature:string;key:string;jobId?:string;status?:JobStatus;editDraft?:ImageEditDraft};
-type ReferenceImage={dataUrl:string;hash:string;name:string;width:number;height:number};
-const maxReferenceBytes=6*1024*1024;
 const editIdeas=[
  {label:'换背景',text:'保留产品主体、包装与已有文字，把背景换成干净的米白色摄影棚，增加柔和自然光与真实投影。'},
  {label:'产品精修',text:'保留产品形状、颜色、纹理、包装与已有文字，优化曝光、光线、清晰度与构图，修整背景杂物，呈现自然的电商产品摄影质感。'},
  {label:'包装概念',text:'以实拍产品为依据，保留产品本身的形态与品牌识别，为外包装设计一版简洁、有质感的视觉概念；允许按此要求调整包装配色与版式，不添加未提供的认证、功效或价格。'},
 ];
-async function prepareReference(file:File):Promise<ReferenceImage>{
- if(!file.size||file.size>maxReferenceBytes)throw Error('图片须小于等于 6 MB，请压缩后重新选择。');
- // Some file pickers omit MIME types. Detect supported bytes, then let the browser fully decode them.
- const head=new Uint8Array(await file.slice(0,16).arrayBuffer()),ascii=(start:number,end:number)=>new TextDecoder().decode(head.slice(start,end));
- const mime=head.length>=8&&[137,80,78,71,13,10,26,10].every((v,i)=>head[i]===v)?'image/png':head.length>=3&&head[0]===255&&head[1]===216&&head[2]===255?'image/jpeg':head.length>=16&&ascii(0,4)==='RIFF'&&ascii(8,12)==='WEBP'&&['VP8 ','VP8L','VP8X'].includes(ascii(12,16))?'image/webp':null;
- if(!mime)throw Error('请选择有效的 JPG、PNG 或 WebP 图片；HEIC 等格式请先转换。');
- const url=URL.createObjectURL(new Blob([file],{type:mime})),image=new window.Image();
- try{
-  await new Promise<void>((resolve,reject)=>{image.onload=()=>resolve();image.onerror=()=>reject(Error('这张图片无法读取，请重新导出为 JPG、PNG 或 WebP。'));image.src=url});
-  const width=image.naturalWidth,height=image.naturalHeight;
-  if(!width||!height||width>8192||height>8192||width*height>40000000)throw Error('图片尺寸过大，请缩小至最长边 8192 像素以内后再试。');
-  // Re-encode pixels to remove EXIF/location metadata; retain transparency in PNG/WebP.
-  const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
-  const context=canvas.getContext('2d');if(!context)throw Error('浏览器暂时无法处理图片，请换一个浏览器重试。');
-  context.drawImage(image,0,0);
-  const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(value=>value?resolve(value):reject(Error('图片处理失败，请重新选择。')),mime,0.94));
-  canvas.width=0;canvas.height=0;
-  if(blob.size>maxReferenceBytes)throw Error('处理后的图片超过 6 MB，请缩小图片后重试。');
-  const bytes=await blob.arrayBuffer(),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(n=>n.toString(16).padStart(2,'0')).join('');
-  const dataUrl=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(Error('图片读取失败，请重新选择。'));reader.readAsDataURL(blob)});
-  return {dataUrl,hash,name:file.name,width,height};
- }finally{URL.revokeObjectURL(url);image.onload=null;image.onerror=null}
-}
 const statusLabels:Record<JobStatus,string>={submitting:'正在提交',queued:'等待生成',running:'正在生成',saving:'正在保存作品',succeeded:'已完成',failed:'生成失败',unknown:'结果待确认'};
 const activeStatuses:JobStatus[]=['submitting','queued','running','saving'];
 const labels:Record<Capability,string>={image:'图片',video:'视频'};
@@ -166,6 +142,7 @@ export default function Studio({eventGuest=false}:{eventGuest?:boolean}){
       <div className="studio-image-modes" aria-label="图片创作方式"><button type="button" aria-pressed={imageMode==='text'} onClick={()=>changeImageMode('text')}><Sparkles size={17}/><span>文字生图<small>从描述开始创作</small></span></button><button type="button" aria-pressed={imageMode==='edit'} onClick={()=>changeImageMode('edit')}><ImageIcon size={17}/><span>上传图片改图<small>基于你的产品实拍</small></span></button></div>
       {editing&&<section className="studio-image-edit" aria-label="产品图片二次设计">
        <div className="studio-reference-heading"><span>01 / 选择产品实拍图</span><small>JPG · PNG · WebP / 最多 6 MB</small></div>
+       <p className="studio-reference-note">大尺寸图片会等比缩小至最长边 4096 像素后上传。</p>
        {!editSupported&&<p className="studio-poll-error" role="status">当前所选图片服务暂不支持此改图入口，请选择已接入的 GPT 图片服务。</p>}
        <input className="studio-reference-input" ref={referenceInput} id="studio-reference-file" type="file" tabIndex={-1} accept="image/jpeg,image/png,image/webp" aria-label="选择产品实拍图" disabled={!editSupported} onChange={e=>{const file=e.target.files?.[0];e.target.value='';void chooseReference(file)}}/>
        {referenceImage?<div className="studio-reference-preview"><img src={referenceImage.dataUrl} alt="本次用于二次设计的产品实拍图"/><div className="studio-reference-caption"><div><strong>{referenceImage.name}</strong><small>{referenceImage.width} × {referenceImage.height} · 仅在本页预览</small></div><button type="button" aria-label="移除参考图片" onClick={clearReference}><X size={16}/></button></div><button type="button" className="studio-reference-replace" onClick={()=>referenceInput.current?.click()}>替换图片</button></div>:<button type="button" className="studio-reference-drop" disabled={!editSupported||referenceBusy} onClick={()=>referenceInput.current?.click()}>{referenceBusy?<RefreshCw size={25} className="is-spinning"/>:<Upload size={25}/>}<strong>{referenceBusy?'正在处理图片…':'选择一张产品实拍图'}</strong><span>清晰的主体与包装，让修改更有依据</span></button>}

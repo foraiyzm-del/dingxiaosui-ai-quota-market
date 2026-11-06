@@ -1,4 +1,6 @@
 import {env} from 'cloudflare:workers';
+import {apimartUploadUrl} from '../../../sidecar/apimart-upload-url.mjs';
+import {decryptSecret} from './ai-config';
 import {ApiError,db,field,type Actor} from './tenancy';
 import {listModels,ownedModel} from './user-models';
 import {agricultureMediaPrompt} from './agriculture-policy';
@@ -7,7 +9,7 @@ import {apimartImagePayload,apimartVideoPayload,apimartSubmission,apimartTask,ap
 import {parseUpstreamBody} from './upstream-body';
 import {eventActivationEnabled,reserveEventCredit,completeEventCredit,releaseEventCredit,eventCreditForRequest,markEventCreditUnknown} from './event-credits';
 import {quotaAccount,quotaCenterEnabled,quotaCenterRequest,quotaCenterContent} from './quota-center';
-import {encryptQuotaPayload,decryptQuotaPayload,verifyQuotaJob,type QuotaJob} from './quota-generation';
+import {encryptQuotaPayload,decryptQuotaPayload,verifyQuotaJob,quotaMediaFailure,type QuotaJob} from './quota-generation';
 import {REFUND_CONFIRMED_MESSAGE,REFUND_PENDING_MESSAGE,downloadVerdict,nextSaveAttempts,quotaDeliveredSql,quotaJobUpdateSql,quotaOpenWork,quotaRefundSql,quotaSaveCommitSql,quotaSweepWhere} from './quota-media-recovery';
 
 type Output={url:string;persisted:boolean;expiresAt?:string;expiresAtSource?:'provider';bucketKey?:string;contentType?:string};
@@ -163,8 +165,8 @@ export async function createMediaJob(user:Actor,body:Record<string,unknown>,trus
    if(!uploaded.ok){await uploaded.body?.cancel();throw new ApiError(502,uploaded.status===401||uploaded.status===403?'参考图上传被服务商拒绝，请联系管理员检查图片上传权限':uploaded.status===413?'参考图片过大，请缩小后重试':'参考图上传失败，请稍后重新选择图片并提交')}
    const bytes=await boundedBytes(uploaded,16384);let uploadedData:Record<string,unknown>;
    try{uploadedData=JSON.parse(new TextDecoder().decode(bytes))}catch{throw new ApiError(502,'参考图上传响应无效，请稍后重试')}
-   const url=safeMediaUrl(uploadedData?.url),parsed=new URL(url);
-   if(parsed.hostname!=='upload.apimart.ai'||!parsed.pathname.startsWith('/f/image/')||parsed.hash)throw new ApiError(502,'参考图上传返回了不支持的地址，请联系管理员');
+   const url=apimartUploadUrl(uploadedData?.url,{secrets:[await decryptSecret(provider.keyCipher)]});
+   if(!url)throw new ApiError(502,'参考图上传返回了不支持的地址，请联系管理员');
    referenceUrl=url;
   }catch(error){
    // No generation POST has happened. Upload errors never consume an image credit.
@@ -302,7 +304,7 @@ async function acceptQuotaResult(row:JobRow,result:QuotaJob){
    if(permanent){await rejectQuotaDelivery(await ownedMediaJob(row.user_id,row.id),'作品未能保存到本站，预留次数退回');return;}
    throw error;
   }
- }else if(result.status==='failed')await updateQuotaJob(row.id,'failed','本次生成失败，创作中心已返还预留次数。',undefined,result.id);
+ }else if(result.status==='failed')await updateQuotaJob(row.id,'failed',quotaMediaFailure(result.error),undefined,result.id);
  else if(result.status==='uncertain')await updateQuotaJob(row.id,'unknown','结果待核对，次数仍预留；请保留原任务并联系管理员。',undefined,result.id);
  else await updateQuotaJob(row.id,result.status,null,undefined,result.id);
 }
