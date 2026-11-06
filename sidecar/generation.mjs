@@ -25,45 +25,66 @@ function validText(value, field, max) {
 
 /** DNS is checked and pinned to the HTTP connection, and redirects are never followed. */
 async function networkRequest(address, init, { allowPrivateUpstreams = false, maxBytes = MAX_JSON_BYTES } = {}) {
+  const startedAt = Date.now(), transport = { phase: 'dns' };
+  const elapsed = () => Math.max(0, Date.now() - startedAt);
+  const annotate = error => Object.assign(error, { transport: { ...transport, totalMs: elapsed() } });
   const url = new URL(address);
   const hostname = url.hostname.replace(/^\[|\]$/gu, '');
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw Object.assign(new Error('无效上游地址'), { safeRejection: true });
   let addresses;
-  try { addresses = await resolveUpstreamAddresses(hostname, { signal: init.signal, allowPrivateUpstreams }); }
-  catch (error) { error.preconnect = true; throw error; }
-  if (init.signal?.aborted) throw Object.assign(new Error('上游请求超时'), { safeRejection: true });
+  // System lookup itself is not abortable. Bound the caller's wait and never open
+  // a socket if that lookup eventually finishes after the request deadline.
+  try {
+    addresses = await new Promise((resolve, reject) => {
+      const abort = () => reject(Object.assign(new Error('上游请求超时'), { code: 'ABORT_ERR', cause: init.signal?.reason }));
+      if (init.signal?.aborted) { abort(); return; }
+      init.signal?.addEventListener('abort', abort, { once: true });
+      resolveUpstreamAddresses(hostname, { signal: init.signal, allowPrivateUpstreams }).then(resolve, reject)
+        .finally(() => init.signal?.removeEventListener('abort', abort));
+    });
+  } catch (error) { error.preconnect = true; throw annotate(error); }
+  transport.dnsMs = elapsed();
+  if (init.signal?.aborted) throw annotate(Object.assign(new Error('上游请求超时'), { code: 'ABORT_ERR', cause: init.signal.reason, preconnect: true }));
   return new Promise((resolve, reject) => {
     let connected = false;
+    const rejectRequest = error => reject(annotate(error));
+    transport.phase = 'connecting';
     const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
     const request = send(url, { method: init.method ?? 'GET', headers: init.headers, signal: init.signal,
       // Give each checked address enough time before trying the next address family.
       autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 2000,
       ...(url.protocol === 'https:' ? { servername: isIP(hostname) ? undefined : hostname, rejectUnauthorized: true } : {}),
       lookup: (_name, options, callback) => options.all ? callback(null, addresses) : callback(null, addresses[0].address, addresses[0].family) }, response => {
+      transport.phase = 'response_headers'; transport.responseHeadersMs = elapsed(); transport.httpStatus = response.statusCode || 502;
       const declared = Number(response.headers['content-length']);
-      if (declared > maxBytes) { response.destroy(); reject(Object.assign(new Error('上游响应超过大小限制'), { code: 'UPSTREAM_RESPONSE_TOO_LARGE' })); return; }
+      if (declared > maxBytes) { response.destroy(); rejectRequest(Object.assign(new Error('上游响应超过大小限制'), { code: 'UPSTREAM_RESPONSE_TOO_LARGE' })); return; }
       const chunks = [];
       let size = 0;
       response.on('data', chunk => {
         size += chunk.length;
-        if (size > maxBytes) { response.destroy(); reject(Object.assign(new Error('上游响应超过大小限制'), { code: 'UPSTREAM_RESPONSE_TOO_LARGE' })); }
+        if (size > maxBytes) { response.destroy(); rejectRequest(Object.assign(new Error('上游响应超过大小限制'), { code: 'UPSTREAM_RESPONSE_TOO_LARGE' })); }
         else chunks.push(chunk);
       });
-      response.on('error', reject);
+      response.on('error', rejectRequest);
       response.on('end', () => {
         const body = Buffer.concat(chunks);
         const status = response.statusCode || 502;
-        resolve(new Response([204, 205, 304].includes(status) ? null : body, { status, headers: { 'content-type': response.headers['content-type'] || 'application/octet-stream' } }));
+        transport.phase = 'response_complete'; transport.totalMs = elapsed();
+        resolve(Object.assign(new Response([204, 205, 304].includes(status) ? null : body, { status, headers: { 'content-type': response.headers['content-type'] || 'application/octet-stream' } }), { transport: { ...transport } }));
       });
     });
     request.on('socket', socket => {
       const mark = () => { connected = true; };
       if (socket.readyState === 'open') mark();
-      socket.on(url.protocol === 'https:' ? 'secureConnect' : 'connect', mark);
+      transport.reusedSocket = request.reusedSocket === true;
+      socket.once(url.protocol === 'https:' ? 'secureConnect' : 'connect', () => {
+        mark(); transport.phase = 'connected'; transport[url.protocol === 'https:' ? 'tlsMs' : 'connectMs'] = elapsed();
+      });
     });
+    request.once('finish', () => { transport.bodySentMs = elapsed(); if (transport.responseHeadersMs === undefined) transport.phase = 'body_sent'; });
     request.on('error', error => {
       if (!connected) error.preconnect = true;
-      reject(error);
+      rejectRequest(error);
     });
     if (init.body) request.write(init.body);
     request.end();
@@ -186,7 +207,26 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
   function audit(jobId, action, detail) {
     db.prepare('INSERT INTO generation_audit(job_id,action,detail,created_at) VALUES(?,?,?,?)').run(jobId, action, JSON.stringify(detail ?? {}), now());
   }
-  function uploadFailure(id, category, { startedAt, status, error } = {}) {
+  function uploadDiagnostic({ startedAt, status, error, transport = error?.transport, attempts } = {}) {
+    const knownCodes = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE', 'ETIMEDOUT', 'ABORT_ERR', 'ERR_STREAM_PREMATURE_CLOSE', 'UPSTREAM_RESPONSE_TOO_LARGE'];
+    const code = [error?.code, error?.cause?.code].find(value => knownCodes.includes(value));
+    const safeTransport = {};
+    if (['dns', 'connecting', 'connected', 'body_sent', 'response_headers', 'response_complete'].includes(transport?.phase)) safeTransport.phase = transport.phase;
+    for (const field of ['dnsMs', 'connectMs', 'tlsMs', 'bodySentMs', 'responseHeadersMs', 'totalMs']) {
+      if (Number.isSafeInteger(transport?.[field]) && transport[field] >= 0) safeTransport[field] = transport[field];
+    }
+    if (typeof transport?.reusedSocket === 'boolean') safeTransport.reusedSocket = transport.reusedSocket;
+    const httpStatus = status ?? transport?.httpStatus;
+    return {
+      ...(Number.isFinite(startedAt) ? { elapsedMs: Math.max(0, Date.now() - startedAt) } : {}),
+      ...(Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? { httpStatus } : {}),
+      ...(Number.isInteger(attempts) ? { attempts } : {}),
+      ...(code ? { networkCode: code } : {}),
+      ...(error?.preconnect === true ? { preconnect: true } : {}),
+      ...(Object.keys(safeTransport).length ? { transport: safeTransport } : {}),
+    };
+  }
+  function uploadFailure(id, category, detail = {}) {
     const messages = {
       http: '参考图片上传失败，尚未开始生成，预留次数已退回',
       json: '参考图片上传响应无效，尚未开始生成，预留次数已退回',
@@ -195,14 +235,48 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       timeout: '参考图片上传超时，尚未开始生成，预留次数已退回',
       prepare: '参考图准备失败，尚未开始生成，预留次数已退回',
     };
-    const knownCodes = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ABORT_ERR', 'ERR_STREAM_PREMATURE_CLOSE', 'UPSTREAM_RESPONSE_TOO_LARGE'];
-    const code = [error?.code, error?.cause?.code].find(value => knownCodes.includes(value));
-    audit(id, 'reference.upload_failed', { category,
-      ...(Number.isFinite(startedAt) ? { elapsedMs: Math.max(0, Date.now() - startedAt) } : {}),
-      ...(Number.isInteger(status) ? { httpStatus: status } : {}),
-      ...(code ? { networkCode: code } : {}),
-      ...(error?.preconnect === true ? { preconnect: true } : {}) });
+    audit(id, 'reference.upload_failed', { category, ...uploadDiagnostic(detail) });
     return finish(id, 'failed', { error: messages[category] || messages.prepare });
+  }
+  async function uploadReference(id, config, photo, startedAt) {
+    const boundary = `----QuotaReference${randomUUID().replaceAll('-', '')}`;
+    const extension = photo.contentType === 'image/jpeg' ? 'jpg' : photo.contentType === 'image/webp' ? 'webp' : 'png';
+    const body = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="reference.${extension}"\r\nContent-Type: ${photo.contentType}\r\n\r\n`), photo.bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
+    const deadline = startedAt + 65000;
+    for (let attempts = 1; attempts <= 2; attempts++) {
+      let phase = 'network', status, transport;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw Object.assign(new Error('参考图片上传超时'), { uploadCategory: 'timeout', uploadDetail: { startedAt, attempts: attempts - 1 } });
+      const signal = AbortSignal.timeout(Math.min(30000, config.timeoutMs, remaining));
+      try {
+        const response = await fetcher(`${config.baseUrl}/uploads/images`, { method: 'POST',
+          headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': String(Buffer.byteLength(body)) },
+          body, redirect: 'manual', signal }, 16384);
+        status = response.status; transport = response.transport;
+        if (!response.ok) throw Object.assign(new Error('参考图片上传失败'), { uploadCategory: 'http' });
+        phase = 'json';
+        const uploaded = await readJson(response);
+        phase = 'url';
+        const url = apimartUploadUrl(uploaded?.url, { secrets: [config.apiKey, process.env.APIMART_RELAY_SECRET] });
+        if (!url) throw Object.assign(new Error('参考图片上传结果无效'), { uploadCategory: 'url' });
+        audit(id, 'reference.upload_succeeded', uploadDiagnostic({ startedAt, status, transport, attempts }));
+        return url;
+      } catch (error) {
+        const timeout = phase === 'network' && (signal.aborted || error?.name === 'TimeoutError' || error?.code === 'ETIMEDOUT' || error?.cause?.name === 'TimeoutError');
+        const category = error.uploadCategory || (error?.code === 'UPSTREAM_RESPONSE_TOO_LARGE' ? 'json' : timeout ? 'timeout' : phase);
+        const code = error?.code || error?.cause?.code;
+        const transient = category === 'timeout' || (category === 'network' && !error.safeRejection &&
+          ['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE', 'ERR_STREAM_PREMATURE_CLOSE'].includes(code)) ||
+          (category === 'http' && [408, 429, 502, 503, 504].includes(status));
+        const detail = { startedAt, status, transport: transport || error.transport, error, attempts };
+        if (attempts === 2 || !transient || Date.now() + 500 >= deadline) {
+          throw Object.assign(error, { uploadCategory: category, uploadDetail: { startedAt, status, transport: detail.transport, attempts } });
+        }
+        // Only file storage is repeated; no generation request exists at this point.
+        audit(id, 'reference.upload_retry', { category, ...uploadDiagnostic(detail) });
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
   }
   function rememberUpstream(id, data, secret) {
     let encoded = JSON.stringify(data);
@@ -565,25 +639,12 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
       const headers = { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': id };
       pending.add(id);
       let generationSubmitted = false;
-      let uploadPhase = 'prepare', uploadStartedAt, uploadStatus, uploadSignal;
+      let uploadStartedAt;
       try {
         if (fields.referenceImage) {
           uploadStartedAt = Date.now();
           const photo = referenceImage(fields.referenceImage);
-          const boundary = `----QuotaReference${randomUUID().replaceAll('-', '')}`;
-          const extension = photo.contentType === 'image/jpeg' ? 'jpg' : photo.contentType === 'image/webp' ? 'webp' : 'png';
-          const uploadBody = Buffer.concat([Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="reference.${extension}"\r\nContent-Type: ${photo.contentType}\r\n\r\n`), photo.bytes, Buffer.from(`\r\n--${boundary}--\r\n`)]);
-          uploadPhase = 'network';
-          uploadSignal = AbortSignal.timeout(Math.min(30000, config.timeoutMs));
-          const upload = await fetcher(`${config.baseUrl}/uploads/images`, { method: 'POST', headers: { Authorization: headers.Authorization, 'Content-Type': `multipart/form-data; boundary=${boundary}` }, body: uploadBody, redirect: 'manual', signal: uploadSignal }, 16384);
-          uploadStatus = upload.status;
-          if (!upload.ok) return uploadFailure(id, 'http', { startedAt: uploadStartedAt, status: uploadStatus });
-          uploadPhase = 'json';
-          const uploaded = await readJson(upload);
-          uploadPhase = 'url';
-          const url = apimartUploadUrl(uploaded?.url, { secrets: [config.apiKey, process.env.APIMART_RELAY_SECRET] });
-          if (!url) return uploadFailure(id, 'url', { startedAt: uploadStartedAt, status: uploadStatus });
-          payload.image_urls = [url];
+          payload.image_urls = [await uploadReference(id, config, photo, uploadStartedAt)];
         }
         let body = JSON.stringify(payload);
         if (fields.capability === 'video' && config.videoRequestFormat === 'multipart') {
@@ -604,9 +665,7 @@ export function createGeneration(db, { quota, channels, platforms, fetchImpl, al
         return applyResult(id, data, config.apiKey, config.protocol);
       } catch (error) {
         if (!generationSubmitted) {
-          const timeout = uploadSignal?.aborted || error?.name === 'TimeoutError' || error?.code === 'ETIMEDOUT' || error?.cause?.name === 'TimeoutError';
-          const category = timeout ? 'timeout' : error?.code === 'UPSTREAM_RESPONSE_TOO_LARGE' ? 'json' : uploadPhase;
-          return uploadFailure(id, category, { startedAt: uploadStartedAt, status: uploadStatus, error });
+          return uploadFailure(id, error.uploadCategory || 'prepare', { startedAt: uploadStartedAt, ...error.uploadDetail, error });
         }
         if (error.safeRejection) return finish(id, 'failed', { error: error.message });
         if (error.preconnect) return finish(id, 'failed', { error: '上游暂时无法连接，尚未开始生成，预留次数已退回' });

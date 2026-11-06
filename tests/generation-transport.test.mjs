@@ -18,8 +18,12 @@ const addresses = [{ address: '1.1.1.1', family: 4 }, { address: '2606:4700::111
 test('real shared transport gives every route the 2s family window, pins checked DNS, and does not retry unknown POSTs', async t => {
   const originals = { dns: dns.lookup, http: http.request, https: https.request };
   const calls = [], queries = [];
-  let mode = 'success';
-  dns.lookup = async (hostname, options) => { queries.push(hostname); assert.deepEqual(options, { all: true }); return addresses; };
+  let mode = 'success', hungUploads = 0, hungDns = 0;
+  dns.lookup = async (hostname, options) => {
+    queries.push(hostname); assert.deepEqual(options, { all: true });
+    if (mode === 'dns-hung-once' && hungDns++ === 0) return new Promise(resolve => setTimeout(() => resolve(addresses), 1400));
+    return addresses;
+  };
   const request = (url, options, receive) => {
     const parsed = new URL(url);
     assert.equal(options.autoSelectFamily, true);
@@ -37,6 +41,17 @@ test('real shared transport gives every route the 2s family window, pins checked
       const socket = new EventEmitter(); socket.readyState = 'opening'; pending.emit('socket', socket);
       if (mode === 'upload-preconnect') { pending.emit('error', Object.assign(new Error('connection timed out'), { code: 'ETIMEDOUT' })); return; }
       socket.emit(parsed.protocol === 'https:' ? 'secureConnect' : 'connect');
+      pending.emit('finish');
+      if (['upload-hung-once', 'response-body-hung-once'].includes(mode) && call.route === '/v1/uploads/images' && hungUploads++ === 0) {
+        const response = mode === 'response-body-hung-once' ? new PassThrough() : null;
+        if (response) { response.statusCode = 200; response.headers = { 'content-type': 'application/json' }; receive(response); }
+        const keepAlive = setTimeout(() => { throw new Error('isolated transport failed to abort'); }, 3000);
+        options.signal.addEventListener('abort', () => {
+          clearTimeout(keepAlive);
+          (response || pending).emit('error', Object.assign(new Error('upload deadline'), { code: 'ABORT_ERR', cause: options.signal.reason }));
+        }, { once: true });
+        return;
+      }
       if (mode === 'unknown-post') { pending.emit('error', Object.assign(new Error('connection lost after write'), { code: 'ECONNRESET' })); return; }
       let value, contentType = 'application/json';
       if (call.route === '/v1/uploads/images') {
@@ -98,11 +113,33 @@ test('real shared transport gives every route the 2s family window, pins checked
   const beforeUpload = calls.length, beforeBalance = quota.balance(base).available;
   const failedInput = { ...base, capability: 'image', requestId: 'failed-upload', referenceImage: 'data:image/png;base64,'+png.toString('base64') };
   const failed = await generation.execute(failedInput); assert.equal(failed.status, 'failed');
-  assert.equal((await generation.execute(failedInput)).id, failed.id); assert.equal(calls.length, beforeUpload+1);
+  assert.equal((await generation.execute(failedInput)).id, failed.id); assert.equal(calls.length, beforeUpload+2);
   assert.equal(calls.at(-1).route, '/v1/uploads/images'); assert.equal(quota.balance(base).available, beforeBalance);
   mode = 'unknown-post';
   const beforeUnknown = calls.length, unknownInput = { ...base, capability: 'image', requestId: 'unknown-generation' };
   const unknown = await generation.execute(unknownInput); assert.equal(unknown.status, 'uncertain');
   assert.equal((await generation.execute(unknownInput)).id, unknown.id); assert.equal(calls.length, beforeUnknown+1);
   assert.equal(quota.balance(base).reserved, 1);
+
+  channels.saveChannel({ id: 'fixture', name: 'Offline only', protocol: 'apimart', baseUrl: 'https://api.apimart.ai/v1', models, timeoutMs: 1000 });
+  for (const scenario of ['upload-hung-once', 'response-body-hung-once', 'dns-hung-once']) {
+    mode = scenario; hungUploads = 0; hungDns = 0;
+    const start = calls.length;
+    const input = { ...base, capability: 'image', requestId: scenario, referenceImage: 'data:image/png;base64,'+png.toString('base64') };
+    const job = await generation.execute(input); assert.equal(job.status, 'running');
+    const detail = JSON.parse(db.prepare("SELECT detail FROM generation_audit WHERE job_id=? AND action='reference.upload_retry'").get(job.id).detail);
+    assert.equal(detail.category, 'timeout'); assert.equal(detail.attempts, 1);
+    assert.equal(detail.transport.phase, scenario === 'dns-hung-once' ? 'dns' : scenario === 'response-body-hung-once' ? 'response_headers' : 'body_sent');
+    if (scenario === 'dns-hung-once') {
+      assert.equal(detail.preconnect, true);
+      // The expired first lookup must not create a late upload socket.
+      assert.equal(calls.length - start, 2);
+    } else {
+      assert.equal(detail.preconnect, undefined); assert.equal(typeof detail.transport.tlsMs, 'number');
+      assert.equal(typeof detail.transport.bodySentMs, 'number'); assert.equal(detail.transport.reusedSocket, false);
+      assert.equal(calls.length - start, 3);
+      if (scenario === 'response-body-hung-once') { assert.equal(detail.httpStatus, 200); assert.equal(typeof detail.transport.responseHeadersMs, 'number'); }
+    }
+    const beforeReplay = calls.length; await generation.execute(input); assert.equal(calls.length, beforeReplay);
+  }
 });
