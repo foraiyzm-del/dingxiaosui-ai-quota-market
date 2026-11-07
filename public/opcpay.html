@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" href="data:,">
+  <title>丁小穗额度卡 · 额度集市</title>
+  <link rel="stylesheet" href="/opcpay.css">
+</head>
+<body>
+  <header><a href="/" class="brand">额度集市</a><a href="/?project=dingxiaosui">返回套餐选择</a></header>
+  <main>
+    <div id="environment" class="notice" hidden></div>
+    <section class="intro"><p>丁小穗创作工作台</p><h1 id="page-title">正在读取套餐</h1><p>文案、图片和视频，按你需要的节奏创作。</p></section>
+    <div class="layout">
+      <aside id="package-summary" class="package" aria-label="固定套餐" aria-live="polite"></aside>
+      <section class="flow" aria-label="购买与兑换">
+        <div id="account"></div>
+        <div id="intent"></div>
+        <p id="error" class="error" role="alert"></p>
+      </section>
+    </div>
+    <section id="history" class="history" aria-label="我的兑换记录"></section>
+  </main>
+  <footer>权益兑换记录不代表支付宝逐笔到账凭证。退款及售后请联系收款商户。</footer>
+  <script type="module" src="/opcpay.js"></script>
+</body>
+</html>

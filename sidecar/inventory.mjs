@@ -7,6 +7,20 @@ import { zipStore } from './zip-store.mjs';
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
 const now = () => new Date().toISOString();
 
+// Exports use the consuming project's /redeem contract, not arbitrary routes or
+// a presumed workbench endpoint. Preserve the historical Ding workbench input.
+function exportOrigin(value, projectId) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value !== 'string' || value.length > 300 || /[\u0000-\u001f\u007f\\]/u.test(value)) fail(400, '项目公开兑换地址格式无效');
+  let url;
+  try { url = new URL(value.trim()); } catch { fail(400, '项目公开兑换地址必须是完整的 HTTP(S) 网址'); }
+  const paths = projectId === 'dingxiaosui' ? ['/', '/redeem', '/workbench.html'] : ['/', '/redeem'];
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || !paths.includes(url.pathname)) {
+    fail(400, '项目公开兑换地址只支持无账号密码、查询参数及片段的 HTTP(S) 站点根地址或 /redeem');
+  }
+  return url.origin;
+}
+
 // Internal inventory service. Callers validate product/SKU rules; this module
 // owns card lifecycle and encrypted delivery, and never stores readable codes.
 export function createInventory(db, { quota, secret }) {
@@ -171,6 +185,7 @@ export function createInventory(db, { quota, secret }) {
     },
     exportCsv({ batchId, origin }) {
       const exported = this.exportBatch({ batchId });
+      origin = exportOrigin(origin, exported.batch.projectId);
       const cell = value => {
         const text = value == null ? '' : String(value);
         const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
@@ -185,8 +200,9 @@ export function createInventory(db, { quota, secret }) {
       return { filename: `cards-${exported.batch.batchId}.csv`, body: lines.join('\r\n') };
     },
     async exportQrZip({ batchId, origin }) {
-      if (!origin) fail(409, '请先填写丁小穗公开地址，再导出二维码');
       const exported = this.exportBatch({ batchId });
+      origin = exportOrigin(origin, exported.batch.projectId);
+      if (!origin) fail(409, '请先提供本项目的公开兑换地址，且该站点需实现 /redeem，再导出二维码');
       const QRCode = (await import('qrcode')).default;
       const files = [];
       for (const card of exported.codes) {

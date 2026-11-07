@@ -14,6 +14,8 @@ import { createPaymentProvider } from './payment-provider.mjs';
 import { configurePlatformCatalog } from './sample-platforms.mjs';
 import { createChannelBudgets } from './channel-budgets.mjs';
 import { createSiteSettings } from './site-settings.mjs';
+import { createOpcpay, FIXED_PACKAGES } from './opcpay.mjs';
+import { storefrontCatalog } from './storefront-catalog.mjs';
 
 const sha = s => createHash('sha256').update(s).digest('hex');
 const equal = (a, b) => {
@@ -21,7 +23,8 @@ const equal = (a, b) => {
   return timingSafeEqual(x, y);
 };
 const fail = (status, message) => { throw Object.assign(new Error(message), { status }); };
-export async function startCenter({ root, config, port = config.port, dbPath = path.join(root, 'local/center.sqlite'), generationOptions = {}, paymentOptions = {} }) {
+const entitlementProductIds = new Set(Object.values(FIXED_PACKAGES).map(item => item.productId));
+export async function startCenter({ root, config, port = config.port, dbPath = path.join(root, 'local/center.sqlite'), generationOptions = {}, paymentOptions = {}, opcpayOptions = {} }) {
   const db = new DatabaseSync(dbPath);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS web_sessions (hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
@@ -36,6 +39,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
   const generation = createGeneration(db, { quota, channels, platforms, ...generationOptions });
   const siteSettings = createSiteSettings(db);
   const paymentProvider = createPaymentProvider(db, { commerce, secret: config.merchantKey, ...paymentOptions });
+  const opcpay = createOpcpay(db, { commerce, secret: config.merchantKey, config: {}, ...opcpayOptions });
   const keyFile = path.join(root, 'local/project-keys.json');
   let projectKeys;
   try { projectKeys = JSON.parse(await readFile(keyFile, 'utf8')); } catch (error) {
@@ -58,7 +62,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
   const qrMetaPath = path.join(root, 'local/payment-qr.json');
   const audit = (action, detail) => db.prepare('INSERT INTO center_audit(action,detail,created_at) VALUES(?,?,?)').run(action, JSON.stringify(detail), new Date().toISOString());
   const qrReady = async () => { try { await access(qrPath); return true; } catch { return false; } };
-  const paymentInfo = async () => paymentProvider.publicSettings(await qrReady());
+  const paymentInfo = async () => ({ ...paymentProvider.publicSettings(await qrReady()), ...(config.localSimulation === true ? { simulation: true } : {}) });
   const publicPlatform = id => {
     const result = platforms.listPlatforms({ public: true }).find(p => p.id === id);
     if (!result || !result.enabled) fail(404, '平台不存在或已停用');
@@ -78,7 +82,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
     const cookieMap = Object.fromEntries((req.headers.cookie ?? '').split(';').filter(Boolean).map(v => { const i = v.indexOf('='); return [v.slice(0, i).trim(), v.slice(i + 1).trim()]; }));
     const setCookie = (name, value, age) => {
       const publicOrigin = paymentProvider.safeSettings().publicBaseUrl;
-      const secure = publicOrigin?.startsWith('https:') && new URL(publicOrigin).host === req.headers.host;
+      const secure = [publicOrigin, config.publicOrigin, process.env.CENTER_PUBLIC_ORIGIN].some(origin => origin?.startsWith('https:') && new URL(origin).host === req.headers.host);
       res.setHeader('set-cookie', `${name}=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${secure ? '; Secure' : ''}`);
     };
     let body;
@@ -193,8 +197,12 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
         }
         if (route === '/api/admin/inventory/export' && req.method === 'GET') {
           const batchId = url.searchParams.get('batchId');
-          const origin = url.searchParams.get('origin') || siteSettings.get().dingxiaosuiOrigin;
           const format = url.searchParams.get('format') || 'json';
+          const batch = ['csv', 'qrzip'].includes(format) ? commerce.listBatches().find(item => item.batchId === batchId) : null;
+          if (['csv', 'qrzip'].includes(format) && !batch) fail(404, '制卡批次不存在');
+          // The historical setting belongs to Ding Xiaosui only. A different
+          // project's cards must never inherit its activation destination.
+          const origin = url.searchParams.get('origin') || (batch?.projectId === 'dingxiaosui' ? siteSettings.get().dingxiaosuiOrigin : '');
           audit('inventory.exported', { batchId, format });
           if (format === 'csv') {
             const file = commerce.exportCsv({ batchId, origin });
@@ -251,10 +259,67 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
         }
         fail(404, '管理接口不存在');
       }
-      if (route === '/api/shop/products' && req.method === 'GET') return json({ products: commerce.listProducts(), platforms: platforms.listPlatforms({ public: true }), qrConfigured: await qrReady(), payment: await paymentInfo() });
+      if (route.startsWith('/api/opcpay/')) {
+        // These routes use ambient cookies: require a same-origin browser request
+        // for every mutation, including identity creation and recovery.
+        if (req.method === 'POST' && (!req.headers.origin || !allowedOrigins.includes(req.headers.origin))) fail(403, '请求来源无效');
+        const only = (value, keys) => {
+          if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !keys.includes(key))) fail(400, '请求包含不支持的字段');
+          return value;
+        };
+        const buyerId = opcpay.authenticate(cookieMap.opcpay_buyer);
+        const needBuyer = () => { if (!buyerId) fail(401, '请先创建或恢复兑换账户'); return buyerId; };
+        if (route === '/api/opcpay/info' && req.method === 'GET') return json({ ...opcpay.publicInfo(url.searchParams.has('package') ? url.searchParams.get('package') : 'trial'), paymentTest: config.opcpayPaymentTest === true, workbenchUrl: platforms.listPlatforms({ public: true }).find(p => p.id === 'dingxiaosui')?.url || '' });
+        if (route === '/api/opcpay/buyer' && req.method === 'GET') return json({ authenticated: !!buyerId, ...(buyerId ? { buyerId } : {}) });
+        if (route === '/api/opcpay/buyer' && req.method === 'POST') {
+          only(await input(), []);
+          rate('opcpay-create:' + req.socket.remoteAddress, 10, 60000);
+          if (buyerId) return json({ authenticated: true, buyerId });
+          const { sessionToken, ...buyer } = opcpay.createBuyer();
+          setCookie('opcpay_buyer', sessionToken, 365 * 86400);
+          return json({ authenticated: true, ...buyer }, 201);
+        }
+        if (route === '/api/opcpay/buyer/recover' && req.method === 'POST') {
+          rate('opcpay-recover:' + req.socket.remoteAddress, 10, 15 * 60000);
+          const data = only(await input(), ['recoveryCode']);
+          const { sessionToken, ...buyer } = opcpay.recoverBuyer(data.recoveryCode);
+          setCookie('opcpay_buyer', sessionToken, 365 * 86400);
+          return json({ authenticated: true, ...buyer });
+        }
+        if (route === '/api/opcpay/buyer/logout' && req.method === 'POST') {
+          only(await input(), []); opcpay.revokeSession(cookieMap.opcpay_buyer); setCookie('opcpay_buyer', '', 0); return json({ ok: true });
+        }
+        if (route === '/api/opcpay/intents' && req.method === 'GET') return json({ intents: opcpay.listIntents(needBuyer()) });
+        if (route === '/api/opcpay/intents' && req.method === 'POST') {
+          const data = only(await input(), ['requestId', 'packageId']);
+          rate('opcpay-intents:' + needBuyer(), 20, 60000);
+          return json(opcpay.createIntent({ buyerId, requestId: data.requestId, packageId: data.packageId }), 201);
+        }
+        const intentRoute = route.match(/^\/api\/opcpay\/intents\/([a-zA-Z0-9_-]+)(?:\/(purchase|reconcile|cancel|qr))?$/);
+        if (intentRoute) {
+          const [, id, action] = intentRoute;
+          const owner = needBuyer();
+          if (action === 'qr' && req.method === 'GET') {
+            const record = opcpay.getIntent({ buyerId: owner, id });
+            if (!record.purchaseUrl || ['fulfilled','failed','cancelled','expired'].includes(record.status)) fail(404, '当前没有可用购买入口');
+            const QRCode = (await import('qrcode')).default;
+            const png = await QRCode.toBuffer(record.purchaseUrl, { width: 420, margin: 2 });
+            res.writeHead(200, { 'content-type':'image/png', 'cache-control':'no-store' }); return res.end(png);
+          }
+          if (!action && req.method === 'GET') return json(opcpay.getIntent({ buyerId: owner, id }));
+          if (action && action !== 'qr' && req.method === 'POST') {
+            only(await input(), []);
+            rate('opcpay-action:' + owner, 60, 60000);
+            return json(await opcpay[action]({ buyerId: owner, id }));
+          }
+        }
+        fail(404, '权益兑换接口不存在');
+      }
+      if (route === '/api/shop/products' && req.method === 'GET') return json({ products: commerce.listProducts().filter(p => !entitlementProductIds.has(p.id)), platforms: platforms.listPlatforms({ public: true }), qrConfigured: await qrReady(), payment: await paymentInfo(), entitlement: opcpay.publicInfo(), storefront: storefrontCatalog() });
       if (route === '/api/shop/orders' && req.method === 'POST') {
         rate('shop-orders:' + req.socket.remoteAddress, 30, 60000);
         const body = await input();
+        if (entitlementProductIds.has(body.productId)) fail(409, '此套餐请通过一人付权益兑换入口购买');
         return json({ ...commerce.createOrder({ productId: body.productId, email: body.email, packageId: body.packageId, customUnits: body.customUnits, customQuota: body.customQuota }), qrConfigured: await qrReady(), payment: await paymentInfo() }, 201);
       }
       const shopOrder = route.match(/^\/api\/shop\/orders\/([^/]+)(\/proof|\/cancel|\/pay)?$/);
@@ -281,15 +346,22 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
       }
       const paymentReturn = route.match(/^\/payment-return\/([a-f0-9]{64})$/);
       if (paymentReturn && req.method === 'GET') { res.writeHead(303, { location: paymentProvider.returnLocation(paymentReturn[1]) }); return res.end(); }
-      const portal = route.match(/^\/api\/platforms\/([a-zA-Z0-9._-]+)(?:\/(balance|redeem|generate|jobs)(?:\/([a-zA-Z0-9_-]+))?(\/content)?)?$/);
+      const portal = route.match(/^\/api\/platforms\/([a-zA-Z0-9._-]+)(?:\/(balance|redeem|generate|jobs)(?:\/([a-zA-Z0-9_-]+))?(\/content|\/delivery)?)?$/);
       if (portal) {
-        const [, projectId, action, id, content] = portal; const platform = publicPlatform(projectId), userId = platformUser();
+        const [, projectId, action, id, detail] = portal; const platform = publicPlatform(projectId), userId = platformUser();
         if (!action && req.method === 'GET') return json(platform);
         if (action === 'balance' && req.method === 'GET') return json(quota.balance({ projectId, userId }));
         if (action === 'redeem' && req.method === 'POST') { rate(`redeem:${userId}`, 12); return json(quota.redeem({ projectId, userId, code: (await input()).code })); }
         if (action === 'generate' && req.method === 'POST') { rate(`generate:${userId}`, 20); return json(await generation.execute({ ...(await input()), projectId, userId })); }
-        if (action === 'jobs' && id && req.method === 'GET') {
-          if (content) { const result = await generation.getContent({ projectId, userId, id }); res.writeHead(200, { 'content-type': result.contentType }); return res.end(result.body); }
+        if (action === 'jobs' && id && detail === '/delivery' && req.method === 'POST') {
+          const data = await input();
+          // The public demo may confirm delivery, but only a trusted project
+          // backend or administrator may decide to refund a delivered result.
+          if (data?.action !== 'accept') fail(400, '此入口只支持确认交付；结果异常请联系商家核对');
+          return json(await generation.acceptDelivery({ projectId, userId, id }));
+        }
+        if (action === 'jobs' && id && detail !== '/delivery' && req.method === 'GET') {
+          if (detail === '/content') { const result = await generation.getContent({ projectId, userId, id }); res.writeHead(200, { 'content-type': result.contentType }); return res.end(result.body); }
           return json(await generation.getJob({ projectId, userId, id, refresh: true }));
         }
         fail(404, '平台接口不存在');
@@ -365,7 +437,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
         if (settle && req.method === 'POST') return json(quota.settle({ projectId, usageId: settle[1], action: settle[2] }));
         fail(404, '接入接口不存在');
       }
-      const files = { '/': 'index.html', '/admin': 'index.html', '/demo': 'index.html', '/app.js': 'app.js', '/admin-extensions.js': 'admin-extensions.js', '/combination-editor.js': 'combination-editor.js', '/platform.js': 'platform.js', '/platform.css': 'platform.css', '/style.css': 'style.css', '/shop.js': 'shop.js', '/shop.css': 'shop.css', '/assets/writing-cover.png': 'assets/writing-cover.png' };
+      const files = { '/': 'index.html', '/admin': 'index.html', '/demo': 'index.html', '/opcpay': 'opcpay.html', '/opcpay.js': 'opcpay.js', '/opcpay-state.js': 'opcpay-state.js', '/opcpay.css': 'opcpay.css', '/app.js': 'app.js', '/admin-extensions.js': 'admin-extensions.js', '/combination-editor.js': 'combination-editor.js', '/platform.js': 'platform.js', '/platform.css': 'platform.css', '/style.css': 'style.css', '/shop.js': 'shop.js', '/shop.css': 'shop.css', '/assets/writing-cover.png': 'assets/writing-cover.png' };
       const filename = /^\/(?:pay|checkout|platform)\/[a-zA-Z0-9._-]+$/.test(route) ? 'index.html' : files[route];
       if (filename && req.method === 'GET') {
         const mime = filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : filename.endsWith('.png') ? 'image/png' : 'text/html';
@@ -381,6 +453,7 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
   const bindHost = config.host || process.env.CENTER_BIND_HOST || '127.0.0.1';
   if (typeof bindHost !== 'string' || !/^(?:127\.0\.0\.1|0\.0\.0\.0|::|localhost|[0-9.]+|[a-fA-F0-9:]+)$/u.test(bindHost)) fail(400, '监听地址无效');
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, bindHost, resolve); });
+  port = server.address().port;
   const expiryTimer = setInterval(() => { try { commerce.expireOrders(); } catch (error) { console.error('订单释放失败：', error.message); } }, 60000);
   expiryTimer.unref();
   let generationPoll;
@@ -389,5 +462,12 @@ export async function startCenter({ root, config, port = config.port, dbPath = p
     generationPoll = generation.pollPending({ limit: 10 }).catch(() => console.error('生成任务轮询暂时失败，下次继续')).finally(() => { generationPoll = null; });
   }, 10000);
   generationTimer.unref();
-  return { server, db, quota, payments, commerce, channels, platforms, generation, paymentProvider, async close() { clearInterval(expiryTimer); clearInterval(generationTimer); if (generationPoll) await generationPoll; await new Promise(resolve => server.close(resolve)); db.close(); } };
+  let entitlementPoll;
+  const recoverEntitlements = () => {
+    if (!entitlementPoll) entitlementPoll = opcpay.recoverPending().catch(() => console.error('权益兑换恢复暂时失败，将查询原记录')).finally(() => { entitlementPoll = null; });
+  };
+  const entitlementTimer = setInterval(recoverEntitlements, 15000);
+  entitlementTimer.unref();
+  recoverEntitlements();
+  return { server, db, quota, payments, commerce, channels, platforms, generation, paymentProvider, opcpay, async close() { clearInterval(expiryTimer); clearInterval(generationTimer); clearInterval(entitlementTimer); if (generationPoll) await generationPoll; if (entitlementPoll) await entitlementPoll; await new Promise(resolve => server.close(resolve)); db.close(); } };
 }

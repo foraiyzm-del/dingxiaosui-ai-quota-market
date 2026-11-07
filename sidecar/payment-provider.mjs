@@ -60,6 +60,7 @@ export function createPaymentProvider(db, { commerce, secret, allowLocal = false
   }
   function begin({ id, token, method = 'wxpay' }) {
     const order = commerce.getOrder({ id, token });
+    if (order.settlementKind === 'entitlement') fail(409, '权益兑换记录不能发起现金支付');
     if (!['pending', 'submitted'].includes(order.status)) fail(409, '此订单当前不能发起付款');
     const s = settings();
     if (s.mode === 'manual') return { mode: 'manual' };

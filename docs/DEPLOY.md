@@ -2,6 +2,27 @@
 
 这份说明给负责把发卡网和丁小穗放到公司服务器上的同事。两个程序是分开的：发卡网管激活码和次数，丁小穗是领导打开创作的网站。浏览器不要直接访问 `127.0.0.1`。
 
+## 2026-11-07 固定卡版本升级
+
+本版本可以只部署独立发卡中心，原丁小穗应用继续使用自己的账户、作品和服务。更新已有站点前，先确认线上丁小穗实际使用的 `QUOTA_CENTER_URL`、对应中心数据目录和平台凭证；备份该中心的 SQLite、`local/config.json`、`local/project-keys.json` 与支付配置，再升级代码。保留同一账本、加密主密钥和项目凭证。不要将本机测试 `local/` 上传覆盖线上，也不要用新空账本直接接管已有用户。
+
+1. 使用 Node.js 24+，在新版本目录运行 `npm ci`、`npm test`、`npm run check`；从现有部署保留私密数据和配置。独立中心可用 `scripts/export-standalone.mjs` 导出，不需要重新部署丁小穗。
+2. 在中心后台核对已启用的 `dingxiaosui` 平台、真实三能力渠道以及真实工作台 HTTPS 地址。生产配置不启用 `localModelMock`、`localSimulation` 或 `opcpayPaymentTest`。检查渠道配置不自动发起收费模型请求。
+3. 显式建立以下三个商品，交付方式为 `on_payment`，套餐价格与额度完全匹配。初始化草稿不会自动变成这些在售商品；保留原订单、旧商品和旧卡。
+
+| productId | packageId | 名称 | priceCents | quota（text/image/video） |
+| --- | --- | --- | --- | --- |
+| `dingxiaosui-opcpay-trial` | `trial` | 丁小穗尝鲜卡 | 990 | 10/15/2 |
+| `dingxiaosui-opcpay-week` | `week` | 丁小穗周卡 | 2990 | 30/45/6 |
+| `dingxiaosui-opcpay-month` | `month` | 丁小穗月卡 | 9900 | 100/150/20 |
+
+4. 运行 `node scripts/setup-opcpay.mjs --add-fixed-packages` 准备私密模板。根字段是尝鲜卡，`packages.week`、`packages.month` 分别绑定专用项目，每个项目只允许一个对应价格的 `QUANTITY / COUNT 1` 套餐。API Key 只写入服务器私有 `local/opcpay.json`；按已有商户资料填写 `skuId`、`merchantProjectName` 与交付许可确认。先运行 `node scripts/probe-opcpay.mjs --all`，各档 `differences` 为空后设置对应 `enabled:true`。
+5. 配置真实 `publicOrigin`、`allowedHosts` 与 HTTPS 反向代理（见下文）；采用单 Node 进程守护，不能启用多进程 cluster。购买者使用持久恢复码找回权益；没有支付完成自动回跳，用户扫码后回原兑换页面查询。
+6. 重启中心后检查首页三档、`/api/opcpay/info?package=trial|week|month` 的 `ready`、金额与额度。实际浏览器检查购买、卡密交付及到线上丁小穗的激活链接，同时验证旧账户与旧卡余额。三档入口分别是 `/opcpay`、`/opcpay?package=week`、`/opcpay?package=month`。
+7. 公网实付由用户亲自扫码，分别记录权益到账、同号核销、唯一交付、准确激活及重复刷新结果；本地模拟和只读探针不能替代公网实付。退款由一人付官方客服人工处理，取消本地兑换不等于现金退款。
+
+回滚时保留升级后产生的订单和核销记录，优先回退代码；不要直接覆盖为旧数据库备份。下一节是首次部署完整双系统的说明，已有线上中心升级时不重新初始化其数据。
+
 ## 服务器上要先有什么
 
 - Node.js 24 或更新版本
