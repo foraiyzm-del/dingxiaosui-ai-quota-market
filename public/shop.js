@@ -78,9 +78,88 @@ const icon = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox
   copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 }[name] ?? ''}</svg>`;
-const header = () => `<header class="shop-header"><div class="shop-header-inner"><a class="shop-brand" href="/" aria-label="额度集市首页"><span class="shop-mark" aria-hidden="true">额</span>额度集市</a><nav class="shop-nav" aria-label="主导航"><a href="/" ${location.pathname === '/' ? 'aria-current="page"' : ''}>服务商店</a><button type="button" id="shop-recent-open">我的订单</button></nav></div></header>`;
+const header = () => `<header class="shop-header"><div class="shop-header-inner"><a class="shop-brand" href="/" aria-label="额度集市首页"><span class="shop-mark" aria-hidden="true">额</span>额度集市</a><nav class="shop-nav" aria-label="主导航"><a href="/" ${location.pathname === '/' ? 'aria-current="page"' : ''}>服务商店</a>${entitlementEntry ? '<a href="/opcpay">尝鲜卡订单</a>' : ''}<button type="button" id="shop-recent-open">我的订单</button></nav></div></header>${simulationMode ? '<div class="shop-simulation" role="status">本地模拟演示 · 请勿真实付款 · 不调用收费模型</div>' : ''}`;
 const footer = `<footer class="shop-footer"><span>额度集市 · 服务次数商店</span><div><a href="/#shop-help">购买帮助</a><a href="/admin">商家管理</a></div></footer>`;
 export { quotaPricingFor, selectionFor };
+function fixedEntitlementFor(value) {
+  const item = value?.package;
+  const expected = {trial:[990,10,15,2],week:[2990,30,45,6],month:[9900,100,150,20]}[item?.packageId];
+  if (!expected || value?.enabled !== true || item?.projectId !== 'dingxiaosui'
+    || item.productId !== 'dingxiaosui-opcpay-'+item.packageId || item.priceCents !== expected[0] || item.amount !== 1
+    || item.quota?.text !== expected[1] || item.quota?.image !== expected[2] || item.quota?.video !== expected[3]) return null;
+  return { ...item, ready: value.ready === true, sandbox: value.sandbox === true,
+    href: value.ready === true ? '/opcpay'+(item.packageId==='trial'?'':'?package='+item.packageId) : null, reason: value.reason || '' };
+}
+const storeProjects = [
+  { id: 'dingxiaosui', name: '丁小穗', mark: '穗', tone: 'purple', tagline: '让农品故事，看得见', summary: '文案、图片、视频创作额度' },
+  { id: 'second-project', name: '一二大模型', mark: '一二', tone: 'blue', tagline: '一二大模型', summary: '项目入口' },
+  { id: 'jiuqing', name: '酒擎', mark: '酒', tone: 'wine', tagline: '酒擎', summary: '项目入口' },
+  { id: 'hongfan-party', name: '红帆党建', mark: '帆', tone: 'red', tagline: '红帆党建', summary: '项目入口' },
+];
+export function storefrontFor(result, search = '') {
+  const enabled = new Set((result.platforms ?? []).filter(platform => platform.enabled === true).map(platform => platform.id));
+  if (!storeProjects.every(project => enabled.has(project.id))
+    || [...enabled].some(id => !storeProjects.some(project => project.id === id))) return null;
+  const selectedId = new URLSearchParams(search).get('project') || 'dingxiaosui';
+  const selected = storeProjects.find(project => project.id === selectedId) ?? null;
+  const packages = selected?.id === 'dingxiaosui' && Array.isArray(result.storefront?.dingxiaosui?.packages)
+    ? result.storefront.dingxiaosui.packages.filter(item => ['trial', 'week', 'month', 'season', 'custom'].includes(item.id)
+      && typeof item.label === 'string' && (item.id === 'custom' || (Number.isSafeInteger(item.priceCents) && item.priceCents > 0 && quotaFor(item.quota)))) : [];
+  const entitlements = selected?.id === 'dingxiaosui'
+    ? (result.entitlement?.packages ?? [result.entitlement]).map(fixedEntitlementFor).filter(Boolean) : [];
+  return { projects: storeProjects, selected, packages, entitlements,
+    entitlement: selected?.id === 'dingxiaosui' ? fixedEntitlementFor(result.entitlement) : null };
+}
+export function storefrontSelection(store, id = 'trial', custom = {}) {
+  const item = store?.packages?.find(item => item.id === id);
+  if (!item || store.selected?.id !== 'dingxiaosui') return null;
+  if (id === 'custom') {
+    const values = quotaTypes.map(type => String(custom[type] ?? '0').trim());
+    const counts = values.map(Number), total = counts.reduce((a,b) => a+b, 0);
+    const valid = values.every((value, index) => /^\d+$/.test(value) && Number.isSafeInteger(counts[index]) && counts[index] <= 1000000)
+      && total > 0 && total <= 1000000;
+    return { ...item, priceCents: null, quota: valid ? Object.fromEntries(quotaTypes.map((type,index) => [type,counts[index]])) : null, href: null };
+  }
+  const fixed = store.entitlements?.find(value=>value.packageId===id);
+  const payable = fixed?.ready && item.priceCents === fixed.priceCents
+    && quotaTypes.every(type => item.quota[type] === fixed.quota[type]);
+  return { ...item, href: payable ? fixed.href : null, sandbox: fixed?.sandbox === true };
+}
+function storeProductDetail(store, selection, custom = {}) {
+  if (!selection) return '<h1 id="store-title">请选择套餐</h1><p class="store-description">从上方选择需要的额度套餐。</p>';
+  const customMode = selection.id === 'custom';
+  const quota = customMode ? `<div class="store-custom-fields">${quotaTypes.map(type => `<label>${quotaNames[type]}<span><input data-store-quota="${type}" type="number" min="0" max="1000000" step="1" inputmode="numeric" aria-label="自由组合${quotaNames[type]}次数" value="${esc(custom[type] ?? '0')}"><small>${quotaUnits[type]}</small></span></label>`).join('')}</div><p class="store-custom-message" role="status">${selection.quota ? '已选择 '+esc(quotaLabel(selection.quota)) : '请选择至少一项额度，合计不超过 1,000,000 次。'}</p>`
+    : `<dl class="store-quota">${quotaTypes.map(type => `<div><dt>${quotaNames[type]}</dt><dd>${selection.quota[type]}<small>${quotaUnits[type]}</small></dd></div>`).join('')}</dl>`;
+  const purchase = selection.href ? `<a class="store-buy" href="${selection.href}">${selection.sandbox ? '模拟购买 · 不扣款' : '支付宝购买'}</a>`
+    : `<button class="store-buy" disabled>${customMode ? '自由组合暂未开放购买' : '该套餐暂未开放购买'}</button>`;
+  return `<span class="store-status">${selection.href ? '支付宝购买 · 自动发卡' : '套餐预览'}</span><h1 id="store-title">丁小穗${customMode ? '自由组合' : esc(selection.label)}</h1><p class="store-description">文案、图片、视频分别使用，按需选择。</p><div class="store-price"><strong>${customMode ? '价格待配置' : `<small>¥</small>${money(selection.priceCents)}`}</strong><span>${customMode ? '暂不计算金额' : '套餐价格'}</span></div><h2>${customMode ? '选择需要的额度' : '卡内额度'}</h2>${quota}<div class="store-purchase">${purchase}<a class="store-order-link" href="/opcpay">已购买？查看订单与卡密</a></div><p class="store-purchase-note">${selection.href ? '每次购买兑换 1 张卡，仅限丁小穗使用。' : '该套餐暂未开放付款，可选择其他已开放套餐。'}</p>`;
+}
+function storefrontMarkup(store, selection, custom) {
+  const { selected, entitlement } = store;
+  const storeHeader = `<header class="shop-header"><div class="shop-header-inner"><a class="shop-brand" href="/" aria-label="额度集市首页"><span class="shop-mark" aria-hidden="true">额</span>额度集市</a><nav class="shop-nav" aria-label="主导航"><a href="/" aria-current="page">服务购买</a><a href="/opcpay">订单查询</a></nav></div></header>`;
+  const tabs = `<nav class="store-project-tabs" aria-label="选择项目">${store.projects.map(project => `<a href="/?project=${project.id}" ${selected?.id === project.id ? 'aria-current="page"' : ''}>${project.name}</a>`).join('')}</nav>`;
+  const help = `<section class="store-steps" id="shop-help" aria-label="购买后怎么使用"><h2>购买后，三步开始使用</h2><ol><li><span>1</span><div><strong>支付宝购买</strong><p>保存购买账户恢复码</p></div></li><li><span>2</span><div><strong>领取卡密</strong><p>在订单页查看激活码</p></div></li><li><span>3</span><div><strong>到项目激活</strong><p>额度到账，分别使用</p></div></li></ol></section>`;
+  const cover = selected ? `<div class="store-cover store-tone-${selected.tone}" aria-label="${selected.name}额度卡"><div class="store-cover-card"><span class="store-card-brand">${selected.name}</span><span class="store-card-mark" aria-hidden="true">${selected.mark}</span><div class="store-card-bottom"><span>${selected.id === 'dingxiaosui' ? '创作额度卡' : '项目入口'}</span><span>${selected.id === 'dingxiaosui' ? '文案 / 图片 / 视频' : '敬请期待'}</span></div></div><p>${selected.tagline}</p></div>` : '';
+  const plans = store.packages.length ? `<section class="store-plans" aria-labelledby="store-plans-title"><h2 id="store-plans-title">选择额度套餐</h2><div class="store-plan-grid" role="radiogroup" aria-label="额度套餐">${store.packages.map(item => `<button class="store-plan-option" type="button" role="radio" data-store-package="${item.id}" aria-checked="${selection?.id === item.id}" tabindex="${selection?.id === item.id ? 0 : -1}"><span class="store-plan-title">${esc(item.label)}${item.recommended ? '<small>主推</small>' : ''}</span><span class="store-plan-check" aria-hidden="true">${icon('check',12)}</span>${item.quota ? `<span class="store-plan-counts">${quotaTypes.map(type => `<span><span>${quotaNames[type]}</span><b>${item.quota[type]} ${quotaUnits[type]}</b></span>`).join('')}</span><strong class="store-plan-price">¥${money(item.priceCents)}</strong><span class="store-plan-state">${storefrontSelection(store,item.id)?.href ? (storefrontSelection(store,item.id)?.sandbox ? '模拟购买' : '支付宝购买') : '暂未开放购买'}</span>` : '<span class="store-plan-custom">文案、图片、视频<br>按需选择</span><span class="store-plan-state">价格待配置</span>'}</button>`).join('')}</div></section>` : '';
+  const detail = store.packages.length ? `<section class="store-product-info" id="store-product-detail" aria-labelledby="store-title">${storeProductDetail(store, selection, custom)}</section>`
+    : selected ? `<section class="store-product-info store-coming" aria-labelledby="store-title"><span class="store-status">项目入口</span><h1 id="store-title">${selected.name}</h1><p class="store-description">${selected.id === 'dingxiaosui' ? '套餐正在准备中，开放后可在这里购买。' : '即将接入额度集市'}</p><div class="store-coming-note"><h2>暂未开放购买</h2><p>套餐上线后，可在这里统一购买和领取卡密。</p></div><button class="store-buy" disabled>敬请期待</button><a class="store-order-link" href="/?project=dingxiaosui">查看丁小穗尝鲜卡</a></section>`
+    : '<section class="shop-empty"><h1>此项目不在商城目录中</h1><p>请从上方选择项目。</p><a class="store-order-link" href="/?project=dingxiaosui">查看丁小穗尝鲜卡</a></section>';
+  return `${storeHeader}${simulationMode ? '<div class="shop-simulation" role="status">本地模拟演示 · 请勿真实付款</div>' : ''}<main class="store-main"><div class="store-panel"><div class="store-toolbar"><span>选择项目</span>${tabs}</div>${plans}<div class="store-product-layout">${selected ? `<div class="store-visual">${cover}${selected.id === 'dingxiaosui' ? help : ''}</div>` : ''}${detail}</div></div><p class="store-page-note">各项目独立激活，额度不互通。</p></main><footer class="store-footer"><span>额度集市</span><a href="/admin">商家管理</a></footer>`;
+}
+export function catalogFor(result, search = '') {
+  const query = new URLSearchParams(search), projectId = query.get('project') || '';
+  const allProducts = (result.products ?? []).filter(product => product.active && Number.isSafeInteger(product.priceCents) && product.priceCents > 0 && Number.isSafeInteger(product.units) && product.units > 0);
+  const fixed = fixedEntitlementFor(result.entitlement), platforms = new Map((result.platforms ?? []).map(platform => [platform.id, platform]));
+  const ids = new Set([...allProducts.map(product => product.projectId), ...(result.platforms ?? []).filter(platform => platform.enabled === true).map(platform => platform.id)]);
+  if (fixed) ids.add(fixed.projectId);
+  const projects = [...ids].map(id => ({ id, name: platforms.get(id)?.name || (id === 'dingxiaosui' ? '丁小穗' : id),
+    description: platforms.get(id)?.description || '', entryOnly: !allProducts.some(product => product.projectId === id) && fixed?.projectId !== id }));
+  const products = projectId ? allProducts.filter(product => product.projectId === projectId) : allProducts;
+  return { projects, products, projectId, entitlement: !projectId || projectId === fixed?.projectId ? fixed : null,
+    unknownProject: Boolean(projectId && !projects.some(project => project.id === projectId)),
+    selectedId: products.find(product => product.id === query.get('service'))?.id ?? products[0]?.id };
+}
+let entitlementEntry = false, simulationMode = false;
 const recentStorage = 'quota-market-recent-orders';
 const recentOrders = () => {
   try { return JSON.parse(localStorage.getItem(recentStorage) || '[]').filter(item => item && /^[a-f0-9]{32}$/i.test(item.id) && /^[a-f0-9]{64}$/i.test(item.token)).slice(0, 10); } catch { return []; }
@@ -102,6 +181,7 @@ async function request(url, body, signal) {
 /** Customer surfaces: one service, one package, one next action. */
 export async function renderShop(app) {
   cleanupPrevious?.(); document.body.classList.add('shop-page'); app.classList.add('shop-root');
+  document.body.classList.remove('shop-project-store');
   const controller = new AbortController();
   let stopped = false, timer, dialog;
   const cleanup = () => { stopped = true; clearTimeout(timer); controller.abort(); dialog?.remove(); window.removeEventListener('pagehide', cleanup); };
@@ -124,7 +204,7 @@ export async function renderShop(app) {
     if (!button) return;
     button.onclick = () => {
       const orders = recentOrders();
-      openDialog(`<h2 id="shop-dialog-title">我的订单</h2><p class="shop-dialog-intro">仅显示此浏览器保存的最近 10 笔订单。</p>${orders.length ? `<div class="shop-recent-list">${orders.map(order => `<a class="shop-recent-order" href="${orderLink(order)}"><span><strong>${esc(order.name || '服务订单')}</strong><small>${esc(purchaseSummary(order))} · ${esc(statusNames[order.status] || '查看订单')}</small></span><span>¥${money(order.priceCents)} ${icon('arrow', 16)}</span></a>`).join('')}</div>` : '<div class="shop-recent-empty">还没有订单<p>购买后，订单会保存在这里。</p></div>'}<p class="shop-fine-print">更换浏览器时，请使用你保存的完整订单链接。订单链接可领取卡密，请勿转发给他人。</p>`, button);
+      openDialog(`<h2 id="shop-dialog-title">我的订单</h2><p class="shop-dialog-intro">普通订单显示此浏览器保存的最近 10 笔。${entitlementEntry ? '尝鲜卡订单保存在兑换账户中。' : ''}</p>${entitlementEntry ? '<a class="shop-button" href="/opcpay">查看尝鲜卡订单与卡密</a>' : ''}${orders.length ? `<div class="shop-recent-list">${orders.map(order => `<a class="shop-recent-order" href="${orderLink(order)}"><span><strong>${esc(order.name || '服务订单')}</strong><small>${esc(purchaseSummary(order))} · ${esc(statusNames[order.status] || '查看订单')}</small></span><span>¥${money(order.priceCents)} ${icon('arrow', 16)}</span></a>`).join('')}</div>` : '<div class="shop-recent-empty">还没有订单<p>购买后，订单会保存在这里。</p></div>'}<p class="shop-fine-print">更换浏览器时，请使用你保存的完整订单链接。订单链接可领取卡密，请勿转发给他人。</p>`, button);
     };
   }
   function failView(title, message) {
@@ -140,6 +220,7 @@ export async function renderShop(app) {
       const route = `/api/shop/orders/${encodeURIComponent(orderId)}?token=${encodeURIComponent(token)}`;
       app.innerHTML = `${header()}<main class="shop-loading" role="status">正在读取订单…</main>${footer}`;
       let order = await get(route); if (stopped) return;
+      simulationMode = order.payment?.simulation === true;
       rememberOrder(order, token);
       app.innerHTML = `${header()}<main class="shop-checkout"><a class="shop-back" href="/">${icon('back', 16)} 返回商店</a><ol class="shop-checkout-steps" aria-label="购买进度"><li data-step="1"><span>1</span>确认订单</li><li data-step="2"><span>2</span>完成付款</li><li data-step="3"><span>3</span>领取激活码</li></ol><div class="shop-checkout-grid"><aside class="shop-order-summary"><p class="shop-section-label">你选择的服务</p><h1 id="shop-order-product"></h1><p class="shop-order-selection" id="shop-order-selection"></p><div class="shop-summary-price"><span>¥</span><strong id="shop-order-amount"></strong></div><span class="shop-order-status" id="shop-order-status" role="status" aria-live="polite"></span><p class="shop-order-deadline" id="shop-order-expiry"></p><details class="shop-order-details"><summary>订单详情</summary><dl><div><dt>订单编号</dt><dd id="shop-order-number"></dd></div><div><dt>服务次数</dt><dd id="shop-order-units"></dd></div></dl><button class="shop-text-button" id="shop-copy-order">${icon('copy', 15)} 复制订单链接</button><p class="shop-fine-print">订单也已保存在「我的订单」。</p><button class="shop-text-button shop-cancel-link" id="shop-cancel-order">取消未付款订单</button></details></aside><section class="shop-payment-section" aria-label="订单处理"><div id="shop-payment-content"></div><p class="shop-connection" id="shop-connection" role="status" aria-live="polite"></p></section></div></main>${footer}`;
       wireHeader();
@@ -181,7 +262,7 @@ export async function renderShop(app) {
             if (!['https:', 'http:'].includes(url.protocol)) return;
             const link = target.querySelector('#shop-use-service'), note = target.querySelector('#shop-service-note');
             if (link) { link.href = url.href; link.rel = 'noreferrer'; }
-            if (note) note.textContent = order.projectId === 'dingxiaosui' ? '进入丁小穗，点击「激活」，粘贴激活码即可开始创作，无需注册。' : '登录服务平台，在账户中兑换激活码即可使用。';
+            if (note) note.textContent = simulationMode ? '进入本项目的模拟接入页，粘贴测试卡激活；这里不是实际业务应用。' : order.projectId === 'dingxiaosui' ? '进入丁小穗，点击「激活」，粘贴激活码即可开始创作，无需注册。' : '登录服务平台，在账户中兑换激活码即可使用。';
           }).catch(() => {});
           return;
         }
@@ -204,7 +285,7 @@ export async function renderShop(app) {
           target.innerHTML = `<div class="shop-wait-state"><span class="shop-state-mark">${icon('clock', 28)}</span><h2>商家暂未开启收款</h2><p>订单已保存，现在无需付款。</p><a class="shop-button" href="/">返回商店</a><p class="shop-fine-print">商家开通收款后，可从「我的订单」回来继续。</p></div>`; return;
         }
         const date = new Date(), localTime = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-        target.innerHTML = `<div class="shop-payment-heading"><h2>微信扫码付款</h2><p>请按订单金额支付 <strong>¥${money(order.priceCents)}</strong></p></div><div class="shop-qr-wrap"><img class="shop-payment-qr" src="/payment-qr" alt="商家微信收款码" width="200" height="200"><span>使用微信扫一扫</span></div><details class="shop-proof-details"><summary>我已付款，提交付款信息 ${icon('arrow', 16)}</summary><form id="shop-proof-form" class="shop-proof-form"><label class="shop-field">微信交易单号<input name="reference" maxlength="120" autocomplete="off" required placeholder="在微信账单详情中查看"></label><div class="shop-form-columns"><label class="shop-field">付款时间<input name="paidAt" type="datetime-local" value="${localTime}" required></label><label class="shop-field">付款人昵称 <span>选填</span><input name="payer" maxlength="80" placeholder="便于商家核对"></label></div><p class="shop-form-error" id="shop-proof-error" role="alert"></p><button class="shop-button shop-button-primary shop-wide" type="submit">提交付款信息</button></form></details><p class="shop-fine-print">商家核实到账后发卡，提交信息不会立即认定付款成功。</p>`;
+        target.innerHTML = `<div class="shop-payment-heading"><h2>${simulationMode ? '模拟付款与发卡' : '微信扫码付款'}</h2><p>${simulationMode ? '仅演示订单金额，请勿付款' : '请按订单金额支付'} <strong>¥${money(order.priceCents)}</strong></p></div><div class="shop-qr-wrap"><img class="shop-payment-qr" src="/payment-qr" alt="商家微信收款码" width="200" height="200"><span>${simulationMode ? '演示二维码，不能付款' : '使用微信扫一扫'}</span></div><details class="shop-proof-details"><summary>${simulationMode ? '填写模拟付款信息' : '我已付款，提交付款信息'} ${icon('arrow', 16)}</summary><form id="shop-proof-form" class="shop-proof-form"><label class="shop-field">${simulationMode ? '模拟交易编号' : '微信交易单号'}<input name="reference" maxlength="120" autocomplete="off" required placeholder="${simulationMode ? '填写任意唯一的模拟编号' : '在微信账单详情中查看'}"></label><div class="shop-form-columns"><label class="shop-field">付款时间<input name="paidAt" type="datetime-local" value="${localTime}" required></label><label class="shop-field">付款人昵称 <span>选填</span><input name="payer" maxlength="80" placeholder="便于商家核对"></label></div><p class="shop-form-error" id="shop-proof-error" role="alert"></p><button class="shop-button shop-button-primary shop-wide" type="submit">提交付款信息</button></form></details><p class="shop-fine-print">商家核实到账后发卡，提交信息不会立即认定付款成功。</p>`;
         const form = target.querySelector('#shop-proof-form'), qr = target.querySelector('.shop-payment-qr'); let busy = false;
         qr.onerror = () => { qr.replaceWith(Object.assign(document.createElement('p'), { className: 'shop-form-error', textContent: '收款码未能加载，请稍后重试。' })); form.querySelector('button').disabled = true; };
         form.onsubmit = async event => {
@@ -231,16 +312,65 @@ export async function renderShop(app) {
 
     app.innerHTML = `${header()}<main class="shop-loading" role="status">正在读取服务…</main>${footer}`;
     const result = await get('/api/shop/products'); if (stopped) return;
-    const products = (result.products ?? []).filter(product => product.active && Number.isSafeInteger(product.priceCents) && product.priceCents > 0 && Number.isSafeInteger(product.units) && product.units > 0);
+    entitlementEntry = result.entitlement?.enabled === true;
+    simulationMode = result.payment?.simulation === true;
+    const storefront = storefrontFor(result, location.search);
+    if (storefront) {
+      document.body.classList.add('shop-project-store');
+      let packageId = new URLSearchParams(location.search).get('package') || 'trial';
+      const custom = { text: '0', image: '0', video: '0' };
+      app.innerHTML = storefrontMarkup(storefront, storefrontSelection(storefront, packageId, custom), custom);
+      const detail = app.querySelector('#store-product-detail');
+      function selectPackage(id) {
+        packageId = id;
+        const selection = storefrontSelection(storefront, packageId, custom);
+        if (!selection || !detail) return;
+        app.querySelectorAll('[data-store-package]').forEach(button => {
+          const checked = button.dataset.storePackage === packageId;
+          button.setAttribute('aria-checked', String(checked)); button.tabIndex = checked ? 0 : -1;
+        });
+        detail.innerHTML = storeProductDetail(storefront, selection, custom);
+        detail.querySelectorAll('[data-store-quota]').forEach(input => input.addEventListener('input', () => {
+          custom[input.dataset.storeQuota] = input.value;
+          const preview = storefrontSelection(storefront, 'custom', custom);
+          detail.querySelector('.store-custom-message').textContent = preview.quota ? '已选择 '+quotaLabel(preview.quota) : '请输入非负整数，合计 1 至 1,000,000 次。';
+          input.setAttribute('aria-invalid', String(!preview.quota));
+        }));
+        const query = new URLSearchParams(location.search); query.set('project', 'dingxiaosui'); query.set('package', packageId);
+        history.replaceState(null, '', '/?' + query);
+      }
+      app.querySelectorAll('[data-store-package]').forEach(button => button.addEventListener('click', () => selectPackage(button.dataset.storePackage)));
+      app.querySelector('.store-plan-grid')?.addEventListener('keydown', event => {
+        if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) return;
+        const buttons = [...app.querySelectorAll('[data-store-package]')], index = buttons.indexOf(document.activeElement);
+        if (index < 0) return;
+        event.preventDefault(); const next = buttons[(index + (['ArrowLeft','ArrowUp'].includes(event.key) ? -1 : 1) + buttons.length) % buttons.length];
+        next.click(); next.focus();
+      });
+      if (packageId === 'custom') selectPackage(packageId);
+      return;
+    }
+    const catalog = catalogFor(result, location.search), { products, projects, projectId, entitlement } = catalog;
     const choices = new Map(products.map(product => {
       const options = optionsFor(product), initial = options.find(option => product.fulfillment === 'on_payment' || option.stockAvailable > 0) ?? options[0], pricing = pricingFor(product);
       const quotaPricing = quotaPricingFor(product), initialQuota = quotaFor(initial.quota) ?? Object.fromEntries(quotaTypes.map(type => [type, quotaPricing ? Math.min(1, quotaPricing.maxCounts[type]) : 0]));
       const stockedCustom = (product.customStock ?? []).find(item => item.available > 0);
       return [product.id, { type: 'package', packageId: initial.id, customQuota: Object.fromEntries(quotaTypes.map(type => [type, String(initialQuota[type])])), customUnits: String(stockedCustom?.units ?? (pricing ? Math.min(pricing.maxUnits, Math.max(pricing.minUnits, product.units)) : product.units)) }];
     }));
-    let selectedId = products.find(product => product.id === new URLSearchParams(location.search).get('service'))?.id ?? products[0]?.id;
-    app.innerHTML = `${header()}<main class="shop-main"><div class="shop-intro"><h1>购买服务次数</h1><p>选好服务与次数，付款后领取激活码。</p></div>${products.length ? `<div class="shop-purchase-workspace"><aside class="shop-services"><h2><span>1</span>选择服务</h2><div class="shop-service-list" role="tablist" aria-label="服务">${products.map((product, i) => `<button class="shop-service-option" type="button" role="tab" id="shop-service-${i}" data-service="${esc(product.id)}" aria-controls="shop-selected-service" aria-selected="false"><span class="shop-service-symbol" aria-hidden="true">${String(i + 1).padStart(2, '0')}</span><span><strong>${esc(product.name)}</strong><small>${optionsFor(product).length} 种次数套餐</small></span>${icon('arrow', 16)}</button>`).join('')}</div><p class="shop-service-note">不同服务的次数分别使用。</p></aside><section class="shop-selected-service" id="shop-selected-service" role="tabpanel"></section></div>` : '<div class="shop-empty"><h2>服务正在准备中</h2><p>商家上架后，会显示在这里。</p></div>'}<details class="shop-help" id="shop-help" ${location.hash === '#shop-help' ? 'open' : ''}><summary>购买后怎么使用？</summary><ol><li><strong>选择服务与次数</strong><span>下单后，订单会保存在当前浏览器。</span></li><li><strong>完成付款，领取激活码</strong><span>付款确认后，在订单页复制激活码。</span></li><li><strong>到对应服务兑换</strong><span>登录服务平台，兑换后即可使用。</span></li></ol></details></main>${footer}`;
+    let selectedId = catalog.selectedId;
+    const selectedProject = projects.find(project => project.id === projectId);
+    const entitlementMarkup = entitlement ? `<section class="shop-entitlement" aria-labelledby="shop-entitlement-title"><div><p class="shop-entitlement-label">丁小穗 · 固定套餐</p><h2 id="shop-entitlement-title">丁小穗尝鲜卡</h2><p class="shop-entitlement-quota">${esc(quotaLabel(entitlement.quota))}</p><p class="shop-entitlement-note">本次仅此卡支持支付宝购买。购买 1 次权益，兑换 1 张完整额度卡。</p></div><div class="shop-entitlement-actions"><strong class="shop-entitlement-price"><small>¥</small>${money(entitlement.priceCents)}</strong>${entitlement.ready ? `<a class="shop-button shop-button-primary" href="${entitlement.href}">${entitlement.sandbox ? '模拟购买 · 不扣款' : '支付宝购买'} ${icon('arrow')}</a>` : '<button class="shop-button shop-button-primary" disabled>暂未开放购买</button>'}<a class="shop-text-button" href="/opcpay">查看尝鲜卡订单与卡密</a>${entitlement.ready ? '' : `<p class="shop-choice-error">${esc(entitlement.reason || '套餐正在准备中')}</p>`}</div></section>` : '';
+    const emptyMarkup = entitlement ? '' : selectedProject?.entryOnly
+      ? `<section class="shop-empty shop-project-entry"><h2>${esc(selectedProject.name)} · 项目入口</h2><p>${esc(selectedProject.description || '项目正在准备接入独立商城。')}</p><p>购买与计费尚未接入，暂不提供下单。</p></section>`
+      : '<div class="shop-empty"><h2>服务正在准备中</h2><p>商家上架后，会显示在这里。</p></div>';
+    const projectSelector = `<div class="shop-project-picker"><label for="shop-project">选择项目</label><select id="shop-project"><option value="">全部项目</option>${projects.map(project => `<option value="${esc(project.id)}" ${project.id === projectId ? 'selected' : ''}>${esc(project.name)}${project.entryOnly ? '（入口）' : ''}</option>`).join('')}${catalog.unknownProject ? `<option value="${esc(projectId)}" selected>此项目暂无在售套餐</option>` : ''}</select><p>各项目额度分别计算，卡密仅限对应项目。</p></div>`;
+    app.innerHTML = `${header()}<main class="shop-main"><div class="shop-intro"><h1>选择项目，购买服务次数</h1><p>统一下单，在对应项目激活，按文案、图片、视频分别扣次。</p></div>${projectSelector}${entitlementMarkup}${products.length ? `<div class="shop-purchase-workspace"><aside class="shop-services"><h2><span>1</span>选择服务</h2><div class="shop-service-list" role="tablist" aria-label="服务">${products.map((product, i) => `<button class="shop-service-option" type="button" role="tab" id="shop-service-${i}" data-service="${esc(product.id)}" aria-controls="shop-selected-service" aria-selected="false"><span class="shop-service-symbol" aria-hidden="true">${String(i + 1).padStart(2, '0')}</span><span><strong>${esc(product.name)}</strong><small>${esc(projects.find(project => project.id === product.projectId)?.name || product.projectId)} · ${optionsFor(product).length} 种套餐</small></span>${icon('arrow', 16)}</button>`).join('')}</div><p class="shop-service-note">不同服务的次数分别使用。</p></aside><section class="shop-selected-service" id="shop-selected-service" role="tabpanel"></section></div>` : emptyMarkup}<details class="shop-help" id="shop-help" ${location.hash === '#shop-help' ? 'open' : ''}><summary>购买后怎么使用？</summary><ol><li><strong>选择服务与次数</strong><span>下单后，订单会保存在当前浏览器。</span></li><li><strong>完成付款，领取激活码</strong><span>付款确认后，在订单页复制激活码。</span></li><li><strong>到对应服务兑换</strong><span>登录服务平台，兑换后即可使用。</span></li></ol></details></main>${footer}`;
     wireHeader();
+    app.querySelector('#shop-project').onchange = event => {
+      const query = new URLSearchParams();
+      if (event.target.value) query.set('project', event.target.value);
+      location.assign('/' + (query.size ? '?' + query : ''));
+    };
     function renderSelection() {
       const product = products.find(item => item.id === selectedId); if (!product) return;
       const options = optionsFor(product), pricing = pricingFor(product), quotaPricing = quotaPricingFor(product), choice = choices.get(product.id);
@@ -304,7 +434,7 @@ export async function renderShop(app) {
         };
       };
     }
-    app.querySelectorAll('[data-service]').forEach(button => button.onclick = () => { selectedId = button.dataset.service; renderSelection(); history.replaceState(null, '', `/?service=${encodeURIComponent(selectedId)}`); });
+    app.querySelectorAll('[data-service]').forEach(button => button.onclick = () => { selectedId = button.dataset.service; renderSelection(); const query = new URLSearchParams(location.search); query.set('service', selectedId); history.replaceState(null, '', '/?' + query); });
     app.querySelector('[role="tablist"]')?.addEventListener('keydown', event => {
       if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(event.key)) return;
       const buttons = [...app.querySelectorAll('[data-service]')], index = buttons.indexOf(document.activeElement); if (index < 0) return;

@@ -197,11 +197,12 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
   try {
     for (const [table, columns] of [
       ['shop_products', [['package_options', 'TEXT'], ['custom_pricing', 'TEXT'], ['quota_pricing', 'TEXT'], ['fulfillment', "TEXT NOT NULL DEFAULT 'stock'"], ['media_spec_json', 'TEXT']]],
-      ['shop_orders', [['selection_type', "TEXT NOT NULL DEFAULT 'standard'"], ['package_label', "TEXT NOT NULL DEFAULT '标准套餐'"], ['sku_id', 'TEXT'], ['capabilities', "TEXT NOT NULL DEFAULT '[]'"], ['api_bindings', "TEXT NOT NULL DEFAULT '[]'"], ['inventory_id', 'TEXT'], ['expires_at', 'TEXT'], ['closed_at', 'TEXT'], ['closed_reason', 'TEXT'], ['quota_json', 'TEXT'], ['fulfillment', "TEXT NOT NULL DEFAULT 'stock'"]]],
+      ['shop_orders', [['selection_type', "TEXT NOT NULL DEFAULT 'standard'"], ['package_label', "TEXT NOT NULL DEFAULT '标准套餐'"], ['sku_id', 'TEXT'], ['capabilities', "TEXT NOT NULL DEFAULT '[]'"], ['api_bindings', "TEXT NOT NULL DEFAULT '[]'"], ['inventory_id', 'TEXT'], ['expires_at', 'TEXT'], ['closed_at', 'TEXT'], ['closed_reason', 'TEXT'], ['quota_json', 'TEXT'], ['fulfillment', "TEXT NOT NULL DEFAULT 'stock'"], ['settlement_kind', "TEXT NOT NULL DEFAULT 'cash'"], ['redemption_id', 'TEXT'], ['buyer_id', 'TEXT']]],
     ]) {
       const existing = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
       for (const [name, type] of columns) if (!existing.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
     }
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS shop_orders_redemption ON shop_orders(redemption_id) WHERE redemption_id IS NOT NULL');
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   const inventory = createInventory(db, { quota, secret });
@@ -256,6 +257,7 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
       capabilities: capabilities(readJson(row.capabilities)),
       quota: readQuota(row.quota_json), fulfillment: fulfillment(row.fulfillment),
       expiresAt: row.expires_at, closedAt: row.closed_at, closedReason: row.closed_reason, inventoryId: row.inventory_id,
+      settlementKind: row.settlement_kind, redemptionId: row.redemption_id,
     };
   }
 
@@ -327,7 +329,70 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
     });
   }
 
+  // Shared inventory transaction for both cash and independently verified
+  // entitlement deliveries. The caller owns settlement validation.
+  function issueCard(row, skuId, soldSpec) {
+    const allocation = readQuota(row.quota_json);
+    let generatedBatchId;
+    if (row.fulfillment === 'on_payment' && !db.prepare('SELECT id FROM shop_inventory WHERE order_id=?').get(row.id)) {
+      generatedBatchId = inventory.generate({ productId: row.product_id, projectId: row.project_id, skuId,
+        productName: row.product_name, packageLabel: row.package_label, units: row.units, quantity: 1,
+        quota: allocation, mediaSpec: soldSpec }).batchId;
+    }
+    const reserved = inventory.reserve({ productId: row.product_id, projectId: row.project_id, skuId,
+      units: row.units, orderId: row.id, quota: allocation, batchId: generatedBatchId });
+    const { code } = inventory.fulfill({ orderId: row.id });
+    return { reserved, code, encrypted: encryptCode(code, row.id, row.project_id) };
+  }
+
   return {
+    snapshotEntitlement({ productId, packageId } = {}) {
+      const row = db.prepare('SELECT * FROM shop_products WHERE id=?').get(identifier(productId, '商品ID'));
+      if (!row || row.active !== 1) fail(409, '权益商品尚未上架');
+      const settings = productRecord(row);
+      const option = settings.packageOptions.find(item => item.id === packageId);
+      if (!option?.quota || settings.fulfillment !== 'on_payment') fail(409, '权益商品必须配置固定分项次数与自动发卡');
+      const projectId = option.projectId ?? row.project_id;
+      const routing = allocationRouting(projectId, option.quota, option);
+      return { productId: row.id, projectId, packageId: option.id, name: row.name,
+        description: option.description ?? row.description, packageLabel: option.label,
+        units: option.units, priceCents: option.priceCents, quota: option.quota,
+        capabilities: routing.capabilities, apiBindings: routing.apiBindings, mediaSpec: settings.mediaSpec };
+    },
+
+    // Internal only: callers must persist a confirmed upstream consumption first.
+    // No cash approval, cash timestamps, or fabricated payment transaction is used.
+    fulfillEntitlement({ redemptionId, buyerId, snapshot } = {}) {
+      redemptionId = identifier(redemptionId, '权益核销ID'); buyerId = identifier(buyerId, '购买身份');
+      return transaction(() => {
+        const existing = db.prepare('SELECT * FROM shop_orders WHERE redemption_id=?').get(redemptionId);
+        if (existing) {
+          if (existing.buyer_id !== buyerId || existing.settlement_kind !== 'entitlement') fail(409, '权益交付身份不匹配');
+          return { ...orderRecord(existing), code: decryptCode(existing) };
+        }
+        const id = randomBytes(16).toString('hex'), timestamp = now();
+        const allocation = normalizeQuota(snapshot.quota);
+        const receipt = `ENTITLEMENT:${redemptionId}`;
+        db.prepare(`INSERT INTO shop_orders
+          (id,order_no,product_id,project_id,product_name,description,units,price_cents,email,status,created_at,
+           selection_type,package_label,sku_id,capabilities,api_bindings,quota_json,fulfillment,settlement_kind,redemption_id,buyer_id)
+          VALUES (?,?,?,?,?,?,?,?,?,'pending',?,'package',?,?,?,?,?,'on_payment','entitlement',?,?)`)
+          .run(id, `EQ${randomBytes(10).toString('hex').toUpperCase()}`, snapshot.productId, snapshot.projectId,
+            snapshot.name, snapshot.description ?? '', quotaTotal(allocation), snapshot.priceCents, '', timestamp,
+            snapshot.packageLabel, snapshot.packageId, JSON.stringify(snapshot.capabilities), JSON.stringify(snapshot.apiBindings),
+            quotaKey(allocation), redemptionId, buyerId);
+        const { reserved, code, encrypted } = issueCard(requireOrder(id), snapshot.packageId, mediaSpec(snapshot.mediaSpec));
+        db.prepare(`UPDATE shop_orders SET status='fulfilled',code_ciphertext=?,code_iv=?,code_tag=?,code_suffix=?,
+          fulfilled_at=?,verified_reference=?,inventory_id=? WHERE id=?`)
+          .run(encrypted.ciphertext, encrypted.iv, encrypted.tag, code.slice(-4), timestamp, receipt, reserved.id, id);
+        return { ...orderRecord(requireOrder(id)), code };
+      });
+    },
+
+    getEntitlementOrder({ redemptionId, buyerId } = {}) {
+      const row = db.prepare("SELECT * FROM shop_orders WHERE redemption_id=? AND buyer_id=? AND settlement_kind='entitlement'").get(redemptionId, buyerId);
+      return row ? { ...orderRecord(row), ...(row.status === 'fulfilled' ? { code: decryptCode(row) } : {}) } : null;
+    },
     listProducts({ admin = false } = {}) {
       expireOrders();
       const rows = db.prepare(`SELECT * FROM shop_products ${admin === true ? '' : 'WHERE active = 1'} ORDER BY created_at, id`).all();
@@ -475,6 +540,7 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
       expireOrders();
       transaction(() => {
         const row = requireOrder(id);
+        if (row.settlement_kind !== 'cash') fail(409, '权益兑换不能提交现金付款凭证');
         if (row.closed_at) fail(409, '订单已关闭，请联系管理员核实到账情况');
         if (row.status === 'approved' || row.status === 'fulfilled') return;
         const submittedAt = row.submitted_at ?? now();
@@ -493,6 +559,7 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
       expireOrders();
       return transaction(() => {
         const row = requireOrder(id);
+        if (row.settlement_kind !== 'cash') fail(409, '权益兑换不能按现金到账审核');
         if (row.closed_at && !recovery) fail(409, '订单已关闭，如已核实到账请使用异常订单恢复发货');
         if (row.verified_reference && row.verified_reference !== verifiedReference) fail(409, '此订单已有不同的核验交易记录');
         if (db.prepare('SELECT id FROM shop_orders WHERE verified_reference=? AND id<>?').get(verifiedReference, id)) {
@@ -508,16 +575,8 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
           skuId = (options.find(item => item.id === 'standard' && item.units === row.units && (item.projectId ?? product.project_id) === row.project_id)
             ?? options.find(item => item.units === row.units && (item.projectId ?? product.project_id) === row.project_id))?.id ?? null;
         }
-        const allocation = readQuota(row.quota_json);
-        let generatedBatchId;
-        if (row.fulfillment === 'on_payment' && !db.prepare('SELECT id FROM shop_inventory WHERE order_id=?').get(id)) {
-          const soldSpec = mediaSpec(readJson(db.prepare('SELECT media_spec_json FROM shop_products WHERE id=?').get(row.product_id)?.media_spec_json));
-          generatedBatchId = inventory.generate({ productId: row.product_id, projectId: row.project_id, skuId, productName: row.product_name,
-            packageLabel: row.package_label, units: row.units, quantity: 1, quota: allocation, mediaSpec: soldSpec }).batchId;
-        }
-        const reserved = inventory.reserve({ productId: row.product_id, projectId: row.project_id, skuId, units: row.units, orderId: id, quota: allocation, batchId: generatedBatchId });
-        const { code } = inventory.fulfill({ orderId: id });
-        const encrypted = encryptCode(code, row.id, row.project_id);
+        const soldSpec = mediaSpec(readJson(db.prepare('SELECT media_spec_json FROM shop_products WHERE id=?').get(row.product_id)?.media_spec_json));
+        const { reserved, code, encrypted } = issueCard(row, skuId, soldSpec);
         const timestamp = now();
         const result = db.prepare(`UPDATE shop_orders SET status='fulfilled',code_ciphertext=?,code_iv=?,code_tag=?,
           code_suffix=?,fulfilled_at=?,fulfillment_error=NULL,verified_reference=?,note=?,approved_at=COALESCE(approved_at,?),
@@ -609,7 +668,7 @@ export function createCommerce(db, { quota, secret, channels, platforms } = {}) 
         (SELECT COUNT(*) FROM shop_orders WHERE closed_at IS NOT NULL) AS closedOrderCount,
         (SELECT COUNT(*) FROM shop_orders WHERE status='approved') AS approvedOrderCount,
         (SELECT COUNT(*) FROM shop_orders WHERE status='fulfilled') AS fulfilledOrderCount,
-        (SELECT COALESCE(SUM(price_cents),0) FROM shop_orders WHERE status IN ('approved','fulfilled')) AS revenueCents`).get() };
+        (SELECT COALESCE(SUM(price_cents),0) FROM shop_orders WHERE status IN ('approved','fulfilled') AND settlement_kind='cash') AS revenueCents`).get() };
     },
   };
 }

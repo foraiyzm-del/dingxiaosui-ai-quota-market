@@ -23,12 +23,19 @@ export async function bootstrapDingxiaosui({ baseUrl, adminPassword, workbenchUr
   try {
     const state = await request('/api/admin/state');
     if (!Array.isArray(state.platforms) || !Array.isArray(state.products)) throw new Error('本机发卡网版本不兼容');
-    if (!state.platforms.some(item => item.id === 'dingxiaosui')) {
+    const existingPlatform = state.platforms.find(item => item.id === 'dingxiaosui');
+    if (!existingPlatform) {
       await request('/api/admin/platforms', {
         id: 'dingxiaosui', name: '丁小穗', url: workbenchUrl,
         description: '文案、图片与视频创作。请在后台配置 API 渠道并绑定模型后启用销售。',
         enabled: true, unitsPerUse: 1, bindings: [],
       });
+    } else if (existingPlatform.name === '丁小穗' && existingPlatform.description === '文案、图片与视频创作。'
+      && !existingPlatform.url && existingPlatform.enabled === true && existingPlatform.unitsPerUse === 1
+      && Array.isArray(existingPlatform.bindings) && existingPlatform.bindings.length === 0) {
+      // The four-project storefront creates an empty Ding entry before this
+      // local app is attached. Fill only its missing URL; keep edited entries.
+      await request('/api/admin/platforms', { ...existingPlatform, url: workbenchUrl });
     }
     const product = state.products.find(item => item.id === 'dingxiaosui-creator');
     if (product && product.projectId !== 'dingxiaosui') throw new Error('丁小穗商品标识已用于其他平台，请在后台核对');

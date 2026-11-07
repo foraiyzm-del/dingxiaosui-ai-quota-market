@@ -15,7 +15,7 @@ async function unusedPort() {
   return port;
 }
 
-test('clean clone bootstrap creates a draft and service credential without provider calls, cards or revenue', async t => {
+for (const platformMode of ['entry', 'missing']) test(`${platformMode === 'entry' ? 'four-entry clone connects its pristine Ding entry' : 'bootstrap creates a missing Ding platform'} without provider calls, cards or revenue`, async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'quota-bootstrap-test-'));
   await mkdir(path.join(root, 'local'));
   const port = await unusedPort();
@@ -32,9 +32,11 @@ test('clean clone bootstrap creates a draft and service credential without provi
     await rm(absolute, { recursive: true, force: true });
   });
   const options = { baseUrl: `http://127.0.0.1:${port}`, adminPassword: 'fixture-admin-password' };
+  if (platformMode === 'missing') center.db.prepare('DELETE FROM service_platforms WHERE id=?').run('dingxiaosui');
   const first = await bootstrapDingxiaosui(options);
-  assert.equal(first.createdPlatform, true);
+  assert.equal(first.createdPlatform, platformMode === 'missing');
   assert.equal(first.createdProduct, true);
+  assert.equal(center.platforms.getPlatform('dingxiaosui').url,'http://127.0.0.1:8845/workbench.html');
   assert.match(first.apiKey, /^[a-f0-9]{64}$/);
   const stored = JSON.parse(await readFile(path.join(root, 'local/project-keys.json'), 'utf8'));
   assert.equal(first.apiKey, stored.dingxiaosui);

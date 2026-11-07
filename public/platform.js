@@ -4,7 +4,7 @@ const capabilityUnits = { text: '次', image: '张', video: '个' };
 const quotaDescription = quota => Object.keys(capabilityNames)
   .filter(capability => Number.isSafeInteger(quota?.[capability]) && quota[capability] > 0)
   .map(capability => `${capabilityNames[capability]} ${quota[capability]} ${capabilityUnits[capability]}`).join('、');
-const statusNames = { queued: '正在准备', running: '正在生成', succeeded: '已完成', failed: '未完成', uncertain: '等待核对' };
+const statusNames = { queued: '正在准备', running: '正在生成', ready: '请确认结果', succeeded: '已完成', failed: '未完成', uncertain: '等待核对' };
 const safeMedia = value => {
   if (typeof value !== 'string') return '';
   if (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(value)) return value;
@@ -47,7 +47,7 @@ export async function renderPlatform(app) {
   app.innerHTML = `
     <header class="service-topbar">
       <a class="service-brand" href="/" aria-label="额度集市首页"><span class="service-brand-mark" aria-hidden="true">额</span>额度集市</a>
-      <a class="service-store-link" href="/">购买次数 <span aria-hidden="true">↗</span></a>
+      <a class="service-store-link" href="/?project=${encodeURIComponent(id)}">购买本项目次数 <span aria-hidden="true">↗</span></a>
     </header>
     <main class="service-main">
       <div class="service-heading">
@@ -82,6 +82,7 @@ export async function renderPlatform(app) {
         <div class="service-result-heading"><div><h2 id="result-title">生成结果</h2><span class="service-status" id="generation-status"></span></div><button class="service-secondary" type="button" id="copy-result" hidden>复制内容</button></div>
         <p class="service-result-note" id="generation-note" role="status"></p>
         <div class="service-result-content" id="generation-content"></div>
+        <div id="generation-delivery" hidden><button class="service-primary" type="button" data-delivery="accept">已收到结果，确认扣次</button></div>
         <p class="service-message service-error" id="generation-poll-error" role="status"></p>
         <details class="service-task-details"><summary>任务详情</summary><p id="generation-task"></p><p id="generation-detail-error"></p></details>
       </section>
@@ -98,11 +99,11 @@ export async function renderPlatform(app) {
     : balance.available ?? 0;
   function updateActions() {
     if (!form) return;
-    const awaitingCheck = currentStatus === 'uncertain';
+    const awaitingCheck = currentStatus === 'uncertain', awaitingDelivery = currentStatus === 'ready';
     const capability = selectedCapability(), typed = hasTypedBalance(), usable = availableFor(capability);
     const enough = usable >= units;
-    generateButton.disabled = working || awaitingCheck || (!enough && !pendingRequest);
-    generateButton.textContent = working ? '正在生成…' : awaitingCheck ? '等待商家核对' : pendingRequest ? '恢复上次请求' : enough ? '开始生成 →' : typed ? `请先兑换${capabilityNames[capability]}额度` : '请先兑换次数';
+    generateButton.disabled = working || awaitingCheck || awaitingDelivery || (!enough && !pendingRequest);
+    generateButton.textContent = working ? '正在生成…' : awaitingCheck ? '等待商家核对' : awaitingDelivery ? '请先确认本次结果' : pendingRequest ? '恢复上次请求' : enough ? '开始生成 →' : typed ? `请先兑换${capabilityNames[capability]}额度` : '请先兑换次数';
     form.querySelectorAll('input,textarea,select').forEach(element => { element.disabled = !!pendingRequest || working; });
     app.querySelector('#generation-balance-hint').textContent = working ? '正在处理本次请求，请勿重复提交。' : awaitingCheck ? '本次预扣额度保留中，等待核对结果。' : pendingRequest ? '恢复原请求，不会重新扣次。' : typed
       ? enough ? `${capabilityNames[capability]}当前可用 ${usable} 次，成功后扣除 ${units} 次，失败退回。` : `${capabilityNames[capability]}额度不足，当前可用 ${usable} 次，需要 ${units} 次。`
@@ -155,8 +156,22 @@ export async function renderPlatform(app) {
     status.className = `service-status service-status-${job.status}`;
     app.querySelector('#generation-task').textContent = `任务编号：${job.id ?? ''} · 本次使用 ${hasTypedBalance() && capabilityNames[job.capability] ? `${capabilityNames[job.capability]} ` : ''}${job.units ?? units} 次`;
     app.querySelector('#generation-detail-error').textContent = typeof job.error === 'string' ? job.error : job.error?.message ?? '';
-    const notes = { queued: '任务正在准备，结果会自动显示。', running: '正在处理，离开页面后任务仍会继续。', failed: '本次未完成，预扣次数已退回。你可以调整要求后重试。', uncertain: '结果暂时无法确认，次数暂未结算。请联系商家核对，勿重复提交。', succeeded: '' };
+    const notes = { queued: '任务正在准备，结果会自动显示。', running: '正在处理，离开页面后任务仍会继续。', ready: '结果已准备好，请查看后确认。确认前，本次额度保持预留；无法使用时请联系商家核对。', failed: '本次未完成，预扣次数已退回。你可以调整要求后重试。', uncertain: '结果暂时无法确认，次数暂未结算。请联系商家核对，勿重复提交。', succeeded: '' };
     app.querySelector('#generation-note').textContent = notes[job.status] ?? '';
+    const delivery = app.querySelector('#generation-delivery');
+    delivery.hidden = job.status !== 'ready';
+    delivery.querySelectorAll('[data-delivery]').forEach(button => {
+      button.disabled = false;
+      button.onclick = async () => {
+        delivery.querySelectorAll('button').forEach(item => { item.disabled = true; });
+        try {
+          const next = await request(`${root}/jobs/${encodeURIComponent(job.id)}/delivery`, { action: 'accept' });
+          if (!stopped) { app.querySelector('#generation-poll-error').textContent = ''; showJob(next); }
+        } catch (error) {
+          if (!stopped) { app.querySelector('#generation-poll-error').textContent = `${error.message}。请重试确认原任务，不会重复扣次。`; delivery.querySelectorAll('button').forEach(item => { item.disabled = false; }); }
+        }
+      };
+    });
     const content = app.querySelector('#generation-content');
     content.replaceChildren(); copiedText = '';
     const output = job.output, text = typeof output === 'string' ? output : output?.text ?? output?.content;
@@ -215,7 +230,7 @@ export async function renderPlatform(app) {
     change(); updateActions();
     form.onsubmit = async event => {
       event.preventDefault();
-      if (working || currentStatus === 'uncertain') return;
+      if (working || ['uncertain', 'ready'].includes(currentStatus)) return;
       const data = new FormData(form);
       const payload = pendingRequest ?? { requestId: crypto.randomUUID(), capability: data.get('capability'), prompt: data.get('prompt') };
       if (!pendingRequest && availableFor(payload.capability) < units) {
